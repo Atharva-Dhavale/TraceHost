@@ -18,6 +18,8 @@ import os
 import json
 from decouple import config
 from django.conf import settings
+from django.views.decorators.csrf import csrf_exempt
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Set up logging
 logging.basicConfig(
@@ -29,11 +31,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Load API keys from environment variables
-IPINFO_API_KEY = config('IPINFO_API_KEY')  
-SHODAN_API_KEY = config('SHODAN_API_KEY')
-SECURITY_TRAILS_API_KEY = config('SECURITY_TRAILS_API_KEY')
-GEMINI_API_KEY = config('GEMINI_API_KEY')
+# Load API keys from environment variables (with defaults for development)
+IPINFO_API_KEY = config('IPINFO_API_KEY', default='')  
+SHODAN_API_KEY = config('SHODAN_API_KEY', default='')
+SECURITY_TRAILS_API_KEY = config('SECURITY_TRAILS_API_KEY', default='')
+GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
 
 # Configure Gemini API
 try:
@@ -55,6 +57,24 @@ def call_with_retry(func, *args, max_retries=3, **kwargs):
                 raise
             time.sleep(1)  # Wait before retrying
 
+# Helper to safely extract a single date from WHOIS (which may return a list)
+def _safe_date(val):
+    """Extract a single datetime from a WHOIS field that might be a list."""
+    if val is None:
+        return None
+    if isinstance(val, list):
+        return val[0] if val else None
+    return val
+
+def _serialize_date(val):
+    """Convert a datetime or list-of-datetimes to an ISO string for JSON."""
+    dt = _safe_date(val)
+    if dt is None:
+        return 'N/A'
+    if isinstance(dt, (datetime, date)):
+        return dt.isoformat()
+    return str(dt)
+
 # Function to get Whois information
 def get_whois_info(domain):
     logger.info(f"Getting WHOIS info for {domain}")
@@ -63,17 +83,26 @@ def get_whois_info(domain):
         whois_data = whois.whois(domain)
         logger.info(f"WHOIS lookup completed in {time.time() - start_time:.2f}s")
         return {
-            'registrar': whois_data.registrar,
-            'registrant_name': whois_data.name,
-            'registrant_organization': whois_data.org,
-            'country': whois_data.country,
-            'updated_date': whois_data.updated_date,
-            'creation_date': whois_data.creation_date,
-            'expiration_date': whois_data.expiration_date,
+            'registrar': whois_data.registrar or 'N/A',
+            'registrant_name': whois_data.name or 'N/A',
+            'registrant_organization': whois_data.org or 'N/A',
+            'country': whois_data.country or 'N/A',
+            'updated_date': _safe_date(whois_data.updated_date),
+            'creation_date': _safe_date(whois_data.creation_date),
+            'expiration_date': _safe_date(whois_data.expiration_date),
         }
     except Exception as e:
         logger.error(f"WHOIS lookup failed: {str(e)}")
-        return {'error': str(e)}
+        return {
+            'error': str(e),
+            'registrar': 'N/A',
+            'registrant_name': 'N/A',
+            'registrant_organization': 'N/A',
+            'country': 'N/A',
+            'updated_date': None,
+            'creation_date': None,
+            'expiration_date': None,
+        }
 
 # Function to get DNS information
 def get_dns_info(domain):
@@ -202,14 +231,19 @@ def calculate_risk_score(whois_info, dns_info, location_info, domain=None):
                 return 15  # Very low risk for trusted domains
         
         # Domain age check
-        if whois_info.get('creation_date'):
-            domain_age = timezone.now().date() - whois_info['creation_date'].date()
-            if domain_age.days < 30:
-                logger.info("Domain is less than 30 days old (+20 risk)")
-                score += 20
-            elif domain_age.days < 90:
-                logger.info("Domain is less than 90 days old (+10 risk)")
-                score += 10
+        creation_date = whois_info.get('creation_date')
+        if creation_date and isinstance(creation_date, (datetime, date)):
+            try:
+                cd = creation_date.date() if isinstance(creation_date, datetime) else creation_date
+                domain_age = timezone.now().date() - cd
+                if domain_age.days < 30:
+                    logger.info("Domain is less than 30 days old (+20 risk)")
+                    score += 20
+                elif domain_age.days < 90:
+                    logger.info("Domain is less than 90 days old (+10 risk)")
+                    score += 10
+            except Exception:
+                pass
         
         # Location check
         suspicious_countries = ['XX', 'Unknown']  # Add more as needed
@@ -218,7 +252,8 @@ def calculate_risk_score(whois_info, dns_info, location_info, domain=None):
             score += 15
         
         # Missing information penalty
-        if not whois_info.get('registrar'):
+        registrar = whois_info.get('registrar')
+        if not registrar or registrar == 'N/A':
             logger.info("Missing registrar information (+10 risk)")
             score += 10
         
@@ -460,9 +495,14 @@ def analyze_domain_for_response(domain):
     start_time = time.time()
     
     try:
-        # Collect all necessary data in parallel if possible
-        whois_info = get_whois_info(domain)
-        dns_info = get_dns_info(domain)
+        # Phase 1: WHOIS + DNS in parallel (these are independent and needed first)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            whois_future = executor.submit(get_whois_info, domain)
+            dns_future = executor.submit(get_dns_info, domain)
+            whois_info = whois_future.result()
+            dns_info = dns_future.result()
+        
+        logger.info(f"Phase 1 (WHOIS+DNS) completed in {time.time() - start_time:.2f}s")
         
         # Check if domain doesn't exist
         domain_exists = True
@@ -470,17 +510,13 @@ def analyze_domain_for_response(domain):
             if dns_info["error"] == "non_existent_domain":
                 logger.info(f"Domain {domain} does not exist")
                 domain_exists = False
-                risk_score = 0
-                is_suspicious = False
-                risk_factors = ["Domain does not exist"]
                 
-                # Prepare the response for non-existent domain
                 response_data = {
                     'Domain': domain,
                     'Summary': f"Domain does not exist",
                     'Domain_Exists': False,
                     'Security_Analysis': {
-                        'result': risk_factors,
+                        'result': ["Domain does not exist"],
                         'is_suspicious': False,
                         'risk_score': 0
                     },
@@ -490,19 +526,29 @@ def analyze_domain_for_response(domain):
                 logger.info(f"Domain check for non-existent domain completed in {time.time() - start_time:.2f}s")
                 return response_data
         
-        # Continue with analysis for existing domains
-        historical_dns = get_historical_dns(domain)
-        subdomains = enumerate_subdomains(domain)
-        
-        # If DNS info is available, we can get the ASN info for the first IP
+        # Get IP address from DNS
         ip_address = dns_info[0] if isinstance(dns_info, list) and dns_info else None
-        asn_info = get_asn_info(ip_address) if ip_address else {}
         
-        # SSL certificate logs
-        ssl_info = get_ssl_cert_logs(domain)
+        # Phase 2: Run ALL remaining lookups concurrently
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {}
+            futures['historical_dns'] = executor.submit(get_historical_dns, domain)
+            futures['subdomains'] = executor.submit(enumerate_subdomains, domain)
+            futures['ssl_info'] = executor.submit(get_ssl_cert_logs, domain)
+            if ip_address:
+                futures['asn_info'] = executor.submit(get_asn_info, ip_address)
+                futures['shodan_info'] = executor.submit(get_shodan_info, ip_address)
+            
+            # Collect results
+            historical_dns = futures['historical_dns'].result()
+            subdomains = futures['subdomains'].result()
+            ssl_info = futures['ssl_info'].result()
+            asn_info = futures.get('asn_info', None)
+            asn_info = asn_info.result() if asn_info else {}
+            shodan_info = futures.get('shodan_info', None)
+            shodan_info = shodan_info.result() if shodan_info else {}
         
-        # Shodan information
-        shodan_info = get_shodan_info(ip_address) if ip_address else {}
+        logger.info(f"Phase 2 (concurrent lookups) completed in {time.time() - start_time:.2f}s")
 
         location_link = (
             f"https://www.google.com/maps?q={asn_info.get('latitude')},{asn_info.get('longitude')}"
@@ -514,12 +560,12 @@ def analyze_domain_for_response(domain):
         location = f"{asn_info.get('city', 'Unknown')}, {asn_info.get('region', 'Unknown')}, {asn_info.get('country', 'Unknown')}"
         summary = f"Host IP Address: {ip_address or 'N/A'}, Location: {location}"
 
-        # Calculate risk score using AI
+        # Phase 3: AI risk score (needs whois_info + asn_info)
         risk_score = calculate_ai_risk_score(domain, whois_info, dns_info, asn_info)
         is_suspicious = risk_score > 60
-        
-        # Get risk factors
         risk_factors = get_risk_factors(whois_info, dns_info, asn_info)
+        
+        logger.info(f"Phase 3 (AI risk score) completed in {time.time() - start_time:.2f}s")
         
         # Add latitude and longitude if available
         lat = asn_info.get('latitude')
@@ -527,15 +573,14 @@ def analyze_domain_for_response(domain):
         
         server_location = 'Location data not available'
         if lat and lon:
-            # Add the location to the response
             server_location = {
                 'lat': lat,
                 'lng': lon
             }
         
-        # Prepare the scan result (for potential storage if flagged later)
+        # Prepare the scan result
         scan_result = {
-            'whois_info': whois_info,
+            'whois_info': {k: (_serialize_date(v) if 'date' in k else v) for k, v in whois_info.items()},
             'dns_info': dns_info,
             'location_info': asn_info,
             'shodan_info': shodan_info,
@@ -550,16 +595,16 @@ def analyze_domain_for_response(domain):
             }
         }
         
-        # Generate domain summary using Gemini API
+        # Phase 4: AI summary (run concurrently with nothing — just do it)
         ai_summary = generate_domain_summary({
             'Domain': domain,
             'Domain_Exists': domain_exists,
             'IP_Address': ip_address,
             'ASN_Info': asn_info,
             'Registrar': whois_info.get('registrar', 'N/A'),
-            'Creation_Date': whois_info.get('creation_date', 'N/A'),
-            'Updated_Date': whois_info.get('updated_date', 'N/A'),
-            'Expiration_Date': whois_info.get('expiration_date', 'N/A'),
+            'Creation_Date': _serialize_date(whois_info.get('creation_date')),
+            'Updated_Date': _serialize_date(whois_info.get('updated_date')),
+            'Expiration_Date': _serialize_date(whois_info.get('expiration_date')),
             'Registrant_Name': whois_info.get('registrant_name', 'N/A'),
             'Registrant_Organization': whois_info.get('registrant_organization', 'N/A'),
             'Security_Analysis': {
@@ -570,10 +615,11 @@ def analyze_domain_for_response(domain):
             'Subdomains': subdomains
         })
         
-        # Add AI summary to scan result for potential storage
         scan_result['ai_summary'] = ai_summary
         
-        # Prepare the response data
+        logger.info(f"Phase 4 (AI summary) completed in {time.time() - start_time:.2f}s")
+        
+        # Prepare the response data with serialized dates
         response_data = {
             'Domain': domain,
             'Domain_Exists': domain_exists,
@@ -583,9 +629,9 @@ def analyze_domain_for_response(domain):
             'IP_Address': ip_address or 'N/A',
             'ASN_Info': asn_info,
             'Country': whois_info.get('country', 'N/A'),
-            'Updated_Date': whois_info.get('updated_date', 'N/A'),
-            'Creation_Date': whois_info.get('creation_date', 'N/A'),
-            'Expiration_Date': whois_info.get('expiration_date', 'N/A'),
+            'Updated_Date': _serialize_date(whois_info.get('updated_date')),
+            'Creation_Date': _serialize_date(whois_info.get('creation_date')),
+            'Expiration_Date': _serialize_date(whois_info.get('expiration_date')),
             'Registrant_Name': whois_info.get('registrant_name', 'N/A'),
             'Registrant_Organization': whois_info.get('registrant_organization', 'N/A'),
             'Subdomains': subdomains,
@@ -927,11 +973,16 @@ def get_risk_factors(whois_info, dns_info, location_info):
     factors = []
     
     # Check domain age
-    if whois_info.get('creation_date'):
-        domain_age = timezone.now().date() - whois_info['creation_date'].date()
-        if domain_age.days < 30:
-            factors.append("Recently registered domain")
-            logger.info("Risk factor: Recently registered domain")
+    creation_date = whois_info.get('creation_date')
+    if creation_date and isinstance(creation_date, (datetime, date)):
+        try:
+            cd = creation_date.date() if isinstance(creation_date, datetime) else creation_date
+            domain_age = timezone.now().date() - cd
+            if domain_age.days < 30:
+                factors.append("Recently registered domain")
+                logger.info("Risk factor: Recently registered domain")
+        except Exception:
+            pass
     
     # Check suspicious locations
     suspicious_countries = ['XX', 'Unknown']  # Add more as needed
@@ -1004,6 +1055,7 @@ def suspicious_domains_list(request):
         }, status=500)
 
 # Function to flag a domain for investigation
+@csrf_exempt
 def flag_domain(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Only POST method is supported'}, status=405)
@@ -1090,9 +1142,9 @@ def flag_domain(request):
             # Get risk factors
             risk_factors = get_risk_factors(whois_info, dns_info, asn_info)
             
-            # Prepare scan result
+            # Prepare scan result (serialize dates for JSON storage)
             scan_result = {
-                'whois_info': whois_info,
+                'whois_info': {k: (_serialize_date(v) if 'date' in k else v) for k, v in whois_info.items()},
                 'dns_info': dns_info,
                 'location_info': asn_info,
                 'historical_dns': historical_dns,
@@ -1114,8 +1166,8 @@ def flag_domain(request):
                 country=asn_info.get('country'),
                 city=asn_info.get('city'),
                 registrar=whois_info.get('registrar'),
-                creation_date=whois_info.get('creation_date'),
-                expiration_date=whois_info.get('expiration_date'),
+                creation_date=_safe_date(whois_info.get('creation_date')),
+                expiration_date=_safe_date(whois_info.get('expiration_date')),
                 is_flagged=True,
                 last_flagged_date=timezone.now()
             )

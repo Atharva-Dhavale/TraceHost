@@ -12,20 +12,20 @@ export const ApiStatus = () => {
   
   useEffect(() => {
     // Get the API URL from environment variables
-    const url = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000';
+    const url = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api';
     setApiUrl(url);
     
     // Check if the backend is accessible
     const checkConnection = async () => {
       try {
-        // Use the health endpoint if available, otherwise try a lightweight request
-        const endpoint = `${url}/health`;
+        // Use the dashboard endpoint as a lightweight health check
+        const endpoint = `${url}/dashboard`;
         
         const response = await fetch(endpoint, { 
-          method: 'HEAD',
-          mode: 'no-cors',
+          method: 'GET',
+          mode: 'cors',
           // Short timeout to avoid blocking the UI
-          signal: AbortSignal.timeout(2000)
+          signal: AbortSignal.timeout(5000)
         });
         
         setStatus('connected');

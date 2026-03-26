@@ -68,13 +68,7 @@ const nextConfig = {
   
   // Configure redirects for clean URLs
   async redirects() {
-    return [
-      {
-        source: '/analyze',
-        destination: '/analyze',
-        permanent: true,
-      },
-    ];
+    return [];
   },
 };
 
