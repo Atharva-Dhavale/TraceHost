@@ -180,6 +180,23 @@
   @apply bg-secondary text-secondary-foreground;
 }
 
+/* Risk-level badge colours used in the suspicious domains table */
+.badge-destructive {
+  background: linear-gradient(135deg, hsl(0, 84%, 60%), hsl(350, 80%, 60%));
+  color: white;
+}
+
+.badge-warning {
+  background: linear-gradient(135deg, hsl(45, 100%, 55%), hsl(30, 100%, 55%));
+  color: white;
+}
+
+.badge-outline {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
 /* Risk score visualization - improved with gradient */
 .risk-score-container {
   @apply relative w-full h-2 rounded-full overflow-hidden;

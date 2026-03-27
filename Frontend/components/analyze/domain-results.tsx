@@ -174,7 +174,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
           doc.setTextColor(99, 102, 241);
           doc.text('Risk Score Analysis', 20, 50);
           
-          const riskScore = data.Security_Analysis?.risk_score || 0;
+          const riskScore = data.Security_Analysis?.risk_score ?? 0;
           const riskLevel = getRiskLevel(riskScore);
           const riskColor = 
             riskScore >= 70 ? [239, 68, 68] : // red
@@ -384,7 +384,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
     );
   }
 
-  const riskScore = data.Security_Analysis?.risk_score || 50;
+  const riskScore = data.Security_Analysis?.risk_score ?? 0;
   const registrarInfo = {
     name: data.Registrar || "Unknown",
     registrantName: data.Registrant_Name || "Unknown",
@@ -963,9 +963,9 @@ export function DomainResults({ domain }: DomainResultsProps) {
           
           <Card>
             <CardHeader>
-              <CardTitle>Historical DNS Data</CardTitle>
+              <CardTitle>DNS Records Overview</CardTitle>
               <CardDescription>
-                Changes in DNS records over time
+                Live DNS records and historical data for this domain
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -974,7 +974,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
                   <table className="min-w-full divide-y divide-border">
                     <thead>
                       <tr className="bg-muted/50">
-                        <th className="px-4 py-2 text-left text-sm font-medium">Date</th>
+                        <th className="px-4 py-2 text-left text-sm font-medium">First Seen / Resolved</th>
                         <th className="px-4 py-2 text-left text-sm font-medium">Type</th>
                         <th className="px-4 py-2 text-left text-sm font-medium">Value</th>
                       </tr>
@@ -992,7 +992,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
                 </div>
               ) : (
                 <div className="text-center py-8 text-muted-foreground">
-                  <p>No historical DNS data available for this domain</p>
+                  <p>No DNS records available for this domain</p>
                 </div>
               )}
             </CardContent>

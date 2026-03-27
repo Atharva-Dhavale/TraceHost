@@ -4,7 +4,7 @@ import requests
 import whois
 import dns.resolver
 import ipinfo
-import google.generativeai as genai
+from groq import Groq
 from .models import DomainScan
 from django.db.models import Count, Avg, Min, Max
 from datetime import timedelta, date, datetime
@@ -37,14 +37,10 @@ HTTP_REQUEST_TIMEOUT = 10
 IPINFO_API_KEY = config('IPINFO_API_KEY', default='')  
 SHODAN_API_KEY = config('SHODAN_API_KEY', default='')
 SECURITY_TRAILS_API_KEY = config('SECURITY_TRAILS_API_KEY', default='')
-GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
+GROQ_API_KEY = config('GROQ_API_KEY', default='')
 
-# Configure Gemini API
-try:
-    genai.configure(api_key=GEMINI_API_KEY)
-    logger.info("Gemini API configured successfully")
-except Exception as e:
-    logger.error(f"Failed to configure Gemini API: {str(e)}")
+# Groq client is instantiated per-call (stateless, thread-safe)
+logger.info("Groq API client ready")
 
 # Add retry capability for API calls
 def call_with_retry(func, *args, max_retries=3, **kwargs):
@@ -125,36 +121,102 @@ def get_dns_info(domain):
 def get_historical_dns(domain):
     logger.info(f"Getting historical DNS records for {domain}")
     start_time = time.time()
-    url = f'https://api.securitytrails.com/v1/history/{domain}'
+    # Try SecurityTrails first (may be rate-limited on free plan)
+    url = f'https://api.securitytrails.com/v1/history/{domain}/dns/a'
     headers = {'APIKEY': SECURITY_TRAILS_API_KEY}
     try:
         response = requests.get(url, headers=headers, timeout=HTTP_REQUEST_TIMEOUT)
         if response.status_code == 200:
             logger.info(f"Historical DNS lookup completed in {time.time() - start_time:.2f}s")
-            return response.json()  # Assuming it returns JSON with historical DNS info
+            raw_records = response.json().get('records', [])
+            result = []
+            for record in raw_records:
+                for val in record.get('values', []):
+                    result.append({
+                        'date': record.get('first_seen', 'N/A'),
+                        'type': 'A',
+                        'value': val.get('ip', 'N/A'),
+                        'ttl': None,
+                    })
+            if result:
+                return result
+            logger.warning("SecurityTrails returned empty records, falling back to live DNS")
         else:
-            logger.warning(f"SecurityTrails API returned status code {response.status_code}")
-            return []
+            logger.warning(f"SecurityTrails returned {response.status_code}, falling back to live DNS")
     except Exception as e:
-        logger.error(f"Historical DNS lookup failed: {str(e)}")
+        logger.warning(f"SecurityTrails historical DNS failed: {str(e)}, falling back to live DNS")
+
+    # Free fallback: live DNS lookup via dnspython (no quota, always works)
+    try:
+        today = datetime.utcnow().strftime('%Y-%m-%d')
+        result = []
+        record_types = ['A', 'AAAA', 'MX', 'NS', 'TXT', 'CNAME']
+        for rtype in record_types:
+            try:
+                answers = dns.resolver.resolve(domain, rtype, lifetime=5)
+                for rdata in answers:
+                    value = str(rdata)
+                    # Clean up MX records (remove priority prefix)
+                    if rtype == 'MX':
+                        value = str(rdata.exchange).rstrip('.')
+                    elif rtype == 'NS':
+                        value = str(rdata.target).rstrip('.')
+                    result.append({
+                        'date': today,
+                        'type': rtype,
+                        'value': value,
+                        'ttl': answers.rrset.ttl if answers.rrset else None,
+                    })
+            except Exception:
+                pass  # Record type not available for this domain
+        logger.info(f"Live DNS fallback completed with {len(result)} records in {time.time() - start_time:.2f}s")
+        return result
+    except Exception as e:
+        logger.error(f"Live DNS fallback also failed: {str(e)}")
         return []
 
-# Function to enumerate subdomains using SecurityTrails
 def enumerate_subdomains(domain):
     logger.info(f"Enumerating subdomains for {domain}")
     start_time = time.time()
+
+    # Try SecurityTrails first (paid/limited quota)
     url = f'https://api.securitytrails.com/v1/domain/{domain}/subdomains'
     headers = {'APIKEY': SECURITY_TRAILS_API_KEY}
     try:
         response = requests.get(url, headers=headers, timeout=HTTP_REQUEST_TIMEOUT)
         if response.status_code == 200:
-            logger.info(f"Subdomain enumeration completed in {time.time() - start_time:.2f}s")
-            return response.json().get('subdomains', [])  # Return subdomains list
+            subs = response.json().get('subdomains', [])
+            if subs:
+                logger.info(f"SecurityTrails subdomain enumeration completed in {time.time() - start_time:.2f}s")
+                return [f"{s}.{domain}" for s in subs]
+            logger.warning("SecurityTrails returned empty subdomains, falling back to crt.sh")
         else:
-            logger.warning(f"SecurityTrails API returned status code {response.status_code}")
+            logger.warning(f"SecurityTrails returned {response.status_code}, falling back to crt.sh")
+    except Exception as e:
+        logger.warning(f"SecurityTrails subdomain lookup failed: {str(e)}, falling back to crt.sh")
+
+    # Free fallback: crt.sh certificate transparency logs (no API key, no quota)
+    try:
+        crt_url = f"https://crt.sh/?q=%.{domain}&output=json"
+        response = requests.get(crt_url, timeout=15)
+        if response.status_code == 200:
+            certs = response.json()
+            subdomains = set()
+            for cert in certs:
+                name = cert.get('name_value', '')
+                # SANs can contain multiple entries separated by newlines
+                for entry in name.split('\n'):
+                    entry = entry.strip().lstrip('*.')
+                    if entry and entry.endswith(f'.{domain}') and entry != domain:
+                        subdomains.add(entry)
+            result = sorted(subdomains)
+            logger.info(f"crt.sh subdomain fallback found {len(result)} subdomains in {time.time() - start_time:.2f}s")
+            return result
+        else:
+            logger.warning(f"crt.sh returned {response.status_code}")
             return []
     except Exception as e:
-        logger.error(f"Subdomain enumeration failed: {str(e)}")
+        logger.error(f"crt.sh subdomain fallback failed: {str(e)}")
         return []
 
 # Function for SSL certificate logs using crt.sh
@@ -205,8 +267,8 @@ def get_asn_info(ip):
             'city': details.city,
             'region': details.region,
             'country': details.country_name,
-            'latitude': details.loc.split(',')[0],  # Latitude
-            'longitude': details.loc.split(',')[1]  # Longitude
+            'latitude': (details.loc.split(',')[0] if details.loc and ',' in details.loc else '0'),
+            'longitude': (details.loc.split(',')[1] if details.loc and ',' in details.loc else '0'),
         }
     except Exception as e:
         logger.error(f"ASN lookup failed: {str(e)}")
@@ -222,7 +284,7 @@ def get_asn_info(ip):
 # Function to calculate risk score
 def calculate_risk_score(whois_info, dns_info, location_info, domain=None):
     logger.info("Calculating risk score")
-    score = 50  # Base score
+    score = 50  # Neutral base score
     
     try:
         # Check for trusted TLDs first
@@ -232,35 +294,57 @@ def calculate_risk_score(whois_info, dns_info, location_info, domain=None):
                 logger.info(f"Domain {domain} has a trusted TLD, reducing risk score")
                 return 15  # Very low risk for trusted domains
         
-        # Domain age check
+        # Domain age — rewards established domains, penalises brand-new ones
         creation_date = whois_info.get('creation_date')
         if creation_date and isinstance(creation_date, (datetime, date)):
             try:
                 cd = creation_date.date() if isinstance(creation_date, datetime) else creation_date
                 domain_age = timezone.now().date() - cd
                 if domain_age.days < 30:
-                    logger.info("Domain is less than 30 days old (+20 risk)")
-                    score += 20
+                    logger.info("Domain < 30 days old (+30 risk)")
+                    score += 30
                 elif domain_age.days < 90:
-                    logger.info("Domain is less than 90 days old (+10 risk)")
-                    score += 10
+                    logger.info("Domain < 90 days old (+15 risk)")
+                    score += 15
+                elif domain_age.days < 365:
+                    logger.info("Domain < 1 year old (+5 risk)")
+                    score += 5
+                elif domain_age.days > 1825:  # > 5 years
+                    logger.info("Domain > 5 years old (-20 risk)")
+                    score -= 20
+                elif domain_age.days > 1095:  # > 3 years
+                    logger.info("Domain > 3 years old (-10 risk)")
+                    score -= 10
+                elif domain_age.days > 365:   # 1-3 years
+                    logger.info("Domain 1-3 years old (-5 risk)")
+                    score -= 5
             except Exception:
                 pass
+        else:
+            # Cannot verify age — slight penalty
+            score += 5
         
-        # Location check
-        suspicious_countries = ['XX', 'Unknown']  # Add more as needed
+        # Server location check
+        suspicious_countries = ['XX', 'Unknown']
         if location_info.get('country') in suspicious_countries:
             logger.info(f"Suspicious server location: {location_info.get('country')} (+15 risk)")
             score += 15
         
-        # Missing information penalty
+        # WHOIS completeness — reward full info, penalise missing registrar
         registrar = whois_info.get('registrar')
         if not registrar or registrar == 'N/A':
             logger.info("Missing registrar information (+10 risk)")
             score += 10
+        else:
+            score -= 5  # Known registrar is a trust signal
         
-        # Cap the score at 100
-        final_score = min(100, score)
+        # Registered organisation present — extra trust signal
+        org = whois_info.get('registrant_organization', '')
+        if org and org != 'N/A' and len(str(org)) > 2:
+            score -= 5
+        
+        # Clamp between 5 and 100
+        final_score = max(5, min(100, score))
         logger.info(f"Final risk score: {final_score}")
         return final_score
     
@@ -281,70 +365,66 @@ def calculate_ai_risk_score(domain, whois_info, dns_info, location_info):
     try:
         # Create a structured prompt for Gemini to analyze the domain
         prompt = f"""
-        Analyze the following domain and provide a risk score from 0-100, where higher scores indicate higher risk:
+You are a cybersecurity expert. Assign a risk score (0-100) to the domain below.
+
+SCORING RUBRIC:
+  0-15  : Globally trusted institution or well-known major brand (e.g. google.com, github.com, microsoft.com, amazon.com, apple.com, wikipedia.org)
+  16-30 : Established legitimate business/service, complete WHOIS, old domain, reputable registrar
+  31-50 : Ordinary domain with no clear red flags but limited signals
+  51-70 : Suspicious patterns — new domain, missing WHOIS, unusual TLD, slight brand mimicry
+  71-90 : High-risk — clear phishing/typosquatting indicators, very new domain, hidden registrant
+  91-100: Confirmed-malicious-like — exact brand impersonation plus all red flags present
+
+DOMAIN: {domain}
+
+COLLECTED SIGNALS:
+- Creation Date  : {whois_info.get('creation_date', 'Unknown')}
+- Expiration Date: {whois_info.get('expiration_date', 'Unknown')}
+- Registrar      : {whois_info.get('registrar', 'Unknown')}
+- Registrant Name: {whois_info.get('registrant_name', 'Unknown')}
+- Registrant Org : {whois_info.get('registrant_organization', 'Unknown')}
+- WHOIS Country  : {whois_info.get('country', 'Unknown')}
+- Server Country : {location_info.get('country', 'Unknown')}
+- Server ASN/Org : {location_info.get('asn', 'Unknown')}
+
+ANALYSIS CHECKLIST (consider all):
+1. Brand recognition — Is this a globally recognised top-500 website? → Score 0-15
+2. Domain name patterns — Misspellings, lookalike chars (0→o, 1→l), hyphens, random strings → +risk
+3. Domain age — < 30 days: +30 risk | < 1 year: +10 risk | > 3 years: -10 risk | > 5 years: -20 risk
+4. WHOIS completeness — Missing/private registrant: +10 risk | Full details: -5 risk
+5. Registrar reputation — Obscure/free registrar: +5 risk | Major registrar: -5 risk
+6. Hosting location — High-risk jurisdictions: +10 risk
+7. Trusted TLD — .edu .gov .ac .mil .sch → score must be < 20
+8. Legitimate-service mimicry — Domain built to impersonate another brand → +25-40 risk
+
+IMPORTANT: Globally recognised domains (top-500 Alexa/Tranco) must score 0-15. Do NOT assign > 30 to obviously legitimate major platforms regardless of WHOIS privacy.
+
+Respond ONLY with a valid JSON object, no markdown fences:
+{{"score": <integer 0-100>, "explanation": "<one sentence>"}}
+"""
         
-        Domain: {domain}
-        
-        Domain Information:
-        - Creation Date: {whois_info.get('creation_date', 'Unknown')}
-        - Expiration Date: {whois_info.get('expiration_date', 'Unknown')}
-        - Registrar: {whois_info.get('registrar', 'Unknown')}
-        - Registrant Name: {whois_info.get('registrant_name', 'Unknown')}
-        - Registrant Organization: {whois_info.get('registrant_organization', 'Unknown')}
-        - Country: {whois_info.get('country', 'Unknown')}
-        - Server Location: {location_info.get('country', 'Unknown')}
-        
-        Analyze the domain in the following ways:
-        1. Check if the domain name contains suspicious patterns (similar to legitimate brands, misspellings, excessive hyphens, random characters)
-        2. Assess the domain age (newer domains are higher risk)
-        3. Check if WHOIS privacy protection is used or if registrant details are missing
-        4. Analyze if the domain is hosted in a high-risk country
-        5. Evaluate if the domain is designed to mimic a legitimate service
-        6. If the domain ends with ".edu", ".org", ".gov", ".ac", ".sch", ".mil" or a similar trusted educational/government domain (e.g., ".gov", ".ac", ".sch", ".mil"), the risk score should be reduced to less than 20, as these domains are generally legitimate.
-        
-        Provide a risk score from 0-100 and briefly explain your reasoning. Format your response as a JSON object with "score" and "explanation" fields.
-        """
-        
-        # Call Gemini API for analysis with retry capability
+        # Call Groq API for analysis
         try:
-            model = genai.GenerativeModel('gemini-2.0-flash')
-            # Use timeout from settings if available
-            timeout = getattr(settings, 'GEMINI_API_TIMEOUT', 45)
-            
-            # Set safety settings to avoid content filtering issues
-            safety_settings = {
-                "HARASSMENT": "BLOCK_NONE",
-                "HATE": "BLOCK_NONE",
-                "SEXUAL": "BLOCK_NONE",
-                "DANGEROUS": "BLOCK_NONE",
-            }
-            
-            # Use a more compact generation configuration to reduce response time
-            generation_config = {
-                "temperature": 0.2,
-                "top_p": 0.8,
-                "top_k": 40,
-                "max_output_tokens": 256,
-            }
-            
-            response = call_with_retry(
-                model.generate_content, 
-                prompt, 
-                safety_settings=safety_settings,
-                generation_config=generation_config,
-                max_retries=3
-            )
-            
+            client = Groq(api_key=GROQ_API_KEY)
+
+            def _call_groq_risk():
+                return client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=256,
+                    temperature=0.2,
+                )
+
+            response = call_with_retry(_call_groq_risk, max_retries=3)
+            response_text = response.choices[0].message.content.strip()
+
             # Parse the response to extract the score
             try:
-                import json
-                response_text = response.text.strip()
-                
                 # Try to parse as JSON directly
                 try:
                     result = json.loads(response_text)
                 except json.JSONDecodeError:
-                    # If direct parsing fails, try to extract JSON from text
+                    # Extract JSON from surrounding text
                     import re
                     json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
                     if json_match:
@@ -359,29 +439,29 @@ def calculate_ai_risk_score(domain, whois_info, dns_info, location_info):
                         else:
                             logger.warning("Could not extract risk score from AI response")
                             return calculate_risk_score(whois_info, dns_info, location_info, domain)
-                
-                # Extract the score from the result
+
+                # Extract the score from the parsed result
                 if 'score' in result:
                     ai_score = int(result['score'])
                     logger.info(f"AI generated risk score: {ai_score}")
-                    
-                    # Double-check for trusted TLDs in case AI didn't take it into account properly
+
+                    # Override for trusted TLDs in case AI didn't honour the rubric
                     trusted_tlds = ['.edu', '.gov', '.ac', '.sch', '.mil']
                     if any(domain.lower().endswith(tld) for tld in trusted_tlds) and ai_score > 20:
                         logger.info(f"Overriding AI score for trusted domain {domain}")
-                        return 15  # Override for trusted domains
-                    
+                        return 15
+
                     return ai_score
                 else:
                     logger.warning("AI response did not contain a score")
                     return calculate_risk_score(whois_info, dns_info, location_info, domain)
-                
+
             except Exception as parse_error:
                 logger.error(f"Error parsing AI response: {str(parse_error)}")
                 return calculate_risk_score(whois_info, dns_info, location_info, domain)
-                
+
         except Exception as api_error:
-            logger.error(f"Gemini API error: {str(api_error)}")
+            logger.error(f"Groq API error: {str(api_error)}")
             return calculate_risk_score(whois_info, dns_info, location_info, domain)
     
     except Exception as e:
@@ -397,12 +477,6 @@ def analyze_domain(request):
     if not domain:
         logger.warning("No domain provided in request")
         return JsonResponse({'error': 'No domain provided'}, status=400)
-    
-    # Increase default request timeout to accommodate longer processing times
-    if hasattr(settings, 'DATA_UPLOAD_MAX_MEMORY_SIZE'):
-        original_timeout = settings.DATA_UPLOAD_MAX_MEMORY_SIZE
-        # Temporarily increase timeout for this long-running request
-        settings.DATA_UPLOAD_MAX_MEMORY_SIZE = 10485760  # 10MB
     
     # Process in chunks to avoid streaming errors
     from django.http import StreamingHttpResponse
@@ -479,10 +553,7 @@ def analyze_domain(request):
             'message': str(e),
             'domain': domain
         }, status=500)
-    finally:
-        # Restore original timeout setting if modified
-        if hasattr(settings, 'DATA_UPLOAD_MAX_MEMORY_SIZE') and 'original_timeout' in locals():
-            settings.DATA_UPLOAD_MAX_MEMORY_SIZE = original_timeout
+
 
 # Refactored analyze_domain function for streaming
 def analyze_domain_stream(domain):
@@ -746,51 +817,33 @@ def generate_domain_summary(domain_data):
         IMPORTANT: Do not use any asterisks (*) or hash symbols (#) in your response. Use plain text formatting only.
         """
         
-        # Create Gemini model and generate response with retry
+        # Call Groq API for summary generation
         try:
-            model = genai.GenerativeModel('gemini-2.0-flash')
-            # Use timeout from settings if available
-            timeout = getattr(settings, 'GEMINI_API_TIMEOUT', 30)
-            
-            # Set safety settings to avoid content filtering issues
-            safety_settings = {
-                "HARASSMENT": "BLOCK_NONE",
-                "HATE": "BLOCK_NONE",
-                "SEXUAL": "BLOCK_NONE",
-                "DANGEROUS": "BLOCK_NONE",
-            }
-            
-            # Use a more compact generation configuration to reduce response time
-            generation_config = {
-                "temperature": 0.2,
-                "top_p": 0.8,
-                "top_k": 40,
-                "max_output_tokens": 512,
-            }
-            
-            response = call_with_retry(
-                model.generate_content, 
-                prompt, 
-                safety_settings=safety_settings,
-                generation_config=generation_config,
-                max_retries=3
-            )
-            
-            # Log the generation time
-            logger.info(f"Gemini summary generated in {time.time() - start_time:.2f}s")
-            
-            # Clean up the response by removing asterisks and hash symbols
-            cleaned_text = response.text.replace('*', '').replace('#', '')
-            
-            # Return the cleaned response text
+            client = Groq(api_key=GROQ_API_KEY)
+
+            def _call_groq_summary():
+                return client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=512,
+                    temperature=0.3,
+                )
+
+            response = call_with_retry(_call_groq_summary, max_retries=3)
+            raw_text = response.choices[0].message.content
+
+            logger.info(f"Groq summary generated in {time.time() - start_time:.2f}s")
+
+            # Clean up any stray markdown symbols
+            cleaned_text = raw_text.replace('*', '').replace('#', '')
             return cleaned_text
+
         except Exception as api_error:
-            logger.error(f"Gemini API error: {str(api_error)}")
+            logger.error(f"Groq API error: {str(api_error)}")
             raise
-            
+
     except Exception as e:
-        logger.error(f"Gemini API error: {str(e)}")
-        
+        logger.error(f"Groq API error: {str(e)}")
         # For trusted domains, provide a fallback message if the API fails
         if is_trusted_domain:
             return f"""
@@ -836,8 +889,12 @@ def suspicious_view(request):
 def get_dashboard_data(request):
     logger.info("Dashboard data request received")
     try:
-        # Try to get cached data
-        cache_key = 'dashboard_data'
+        # Read pagination params first — they are part of the cache key
+        page = int(request.GET.get('page', 1))
+        page_size = int(request.GET.get('page_size', 10))
+
+        # Cache key includes pagination so different pages don't collide
+        cache_key = f'dashboard_data_p{page}_ps{page_size}'
         dashboard_data = cache.get(cache_key)
         
         if dashboard_data:
@@ -890,9 +947,7 @@ def get_dashboard_data(request):
                 'percentage': round((count / basic_stats['total_scans'] * 100) if basic_stats['total_scans'] > 0 else 0, 2)
             })
 
-        # Add pagination for recent scans
-        page = int(request.GET.get('page', 1))
-        page_size = int(request.GET.get('page_size', 10))
+        # (page and page_size already read above for cache key)
         
         # Recent Scans with Details
         recent_scans = DomainScan.objects.order_by('-scan_date')[
@@ -1022,10 +1077,15 @@ def suspicious_domains_list(request):
             logger.info(f"Filtering by search term: {search}")
             queryset = queryset.filter(domain__icontains=search)
 
-        # Apply category filter if provided
+        # Apply risk-level filter by score range (not the empty category field)
         if filter_category:
-            logger.info(f"Filtering by category: {filter_category}")
-            queryset = queryset.filter(category=filter_category)
+            logger.info(f"Filtering by risk category: {filter_category}")
+            if filter_category == 'high':
+                queryset = queryset.filter(risk_score__gt=60)
+            elif filter_category == 'medium':
+                queryset = queryset.filter(risk_score__gte=41, risk_score__lte=60)
+            elif filter_category == 'low':
+                queryset = queryset.filter(risk_score__lte=40)
 
         # Get total count
         total = queryset.count()
@@ -1133,12 +1193,16 @@ def flag_domain(request):
                         'message': f"Cannot flag {domain} as it does not exist"
                     }, status=400)
             
-            historical_dns = get_historical_dns(domain)
-            subdomains = enumerate_subdomains(domain)
-            
-            # If DNS info is available, we can get the ASN info for the first IP
             ip_address = dns_info[0] if isinstance(dns_info, list) and dns_info else None
-            asn_info = get_asn_info(ip_address) if ip_address else {}
+
+            # Run remaining lookups concurrently — avoids 30-60 s sequential wait
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                fut_hist = executor.submit(get_historical_dns, domain)
+                fut_subs = executor.submit(enumerate_subdomains, domain)
+                fut_asn  = executor.submit(get_asn_info, ip_address) if ip_address else None
+                historical_dns = fut_hist.result()
+                subdomains     = fut_subs.result()
+                asn_info       = fut_asn.result() if fut_asn else {}
             
             # Calculate risk score
             risk_score = calculate_ai_risk_score(domain, whois_info, dns_info, asn_info)
