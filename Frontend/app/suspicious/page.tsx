@@ -276,7 +276,7 @@ export default function SuspiciousPage() {
                             </TableCell>
                             <TableCell className="text-right">
                               <Button variant="outline" size="sm" className="gradient-border" asChild>
-                                <a href={`/analyze?domain=${domain.domain}`}>
+                                <a href={`/analyze/results?domain=${domain.domain}`}>
                                   View Details
                                 </a>
                               </Button>

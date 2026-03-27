@@ -48,6 +48,13 @@ interface DomainResultsProps {
   domain: string;
 }
 
+type HistoricalDnsEntry = {
+  date?: string | number | null;
+  type?: string | number | null;
+  value?: string | number | null;
+  ttl?: string | number | null;
+};
+
 export function DomainResults({ domain }: DomainResultsProps) {
   const [isFlagged, setIsFlagged] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -835,8 +842,10 @@ export function DomainResults({ domain }: DomainResultsProps) {
                   <Separator className="my-2" />
                   <ul className="list-disc pl-5 space-y-1">
                     {Array.isArray(data['Historical_DNS']) && data['Historical_DNS'].length > 0 ? (
-                      data['Historical_DNS'].filter(record => record.type === 'NS').map((record, index) => (
-                        <li key={index}>{record.value}</li>
+                      (data['Historical_DNS'] as HistoricalDnsEntry[])
+                        .filter((record) => String(record.type || "") === 'NS')
+                        .map((record, index) => (
+                        <li key={index}>{String(record.value || "N/A")}</li>
                       ))
                     ) : (
                       <>
@@ -971,11 +980,11 @@ export function DomainResults({ domain }: DomainResultsProps) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {data['Historical_DNS'].map((record, index) => (
+                      {(data['Historical_DNS'] as HistoricalDnsEntry[]).map((record, index) => (
                         <tr key={index}>
-                          <td className="px-4 py-2 text-sm">{record.date || "N/A"}</td>
-                          <td className="px-4 py-2 text-sm">{record.type || "A"}</td>
-                          <td className="px-4 py-2 text-sm font-mono break-all">{record.value || "N/A"}</td>
+                          <td className="px-4 py-2 text-sm">{String(record.date || "N/A")}</td>
+                          <td className="px-4 py-2 text-sm">{String(record.type || "A")}</td>
+                          <td className="px-4 py-2 text-sm font-mono break-all">{String(record.value || "N/A")}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1202,7 +1211,11 @@ const generateCsv = (data: DomainAnalysisResponse, domain: string): string => {
   if (data.Historical_DNS && Array.isArray(data.Historical_DNS) && data.Historical_DNS.length > 0) {
     rows.push(['DNS Records']);
     for (const record of data.Historical_DNS) {
-      rows.push([`${record.type || 'A'}`, record.value, `TTL: ${record.ttl || '3600'}`]);
+      rows.push([
+        String(record.type || 'A'),
+        String(record.value || 'N/A'),
+        `TTL: ${record.ttl || '3600'}`
+      ]);
     }
     rows.push(['']);
   }
@@ -1230,8 +1243,8 @@ function generateDnsRecords(data: DomainAnalysisResponse | null): { type: string
   }
 
   return data.Historical_DNS.map(record => ({
-    type: record.type || 'A',
-    value: record.value || 'N/A',
+    type: String(record.type || 'A'),
+    value: String(record.value || 'N/A'),
     ttl: record.ttl ? `${record.ttl} seconds` : 'N/A'
   }));
 }

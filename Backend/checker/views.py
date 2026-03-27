@@ -19,7 +19,7 @@ import json
 from decouple import config
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 # Set up logging
 logging.basicConfig(
@@ -30,6 +30,8 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+HTTP_REQUEST_TIMEOUT = 10
 
 # Load API keys from environment variables (with defaults for development)
 IPINFO_API_KEY = config('IPINFO_API_KEY', default='')  
@@ -126,7 +128,7 @@ def get_historical_dns(domain):
     url = f'https://api.securitytrails.com/v1/history/{domain}'
     headers = {'APIKEY': SECURITY_TRAILS_API_KEY}
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=HTTP_REQUEST_TIMEOUT)
         if response.status_code == 200:
             logger.info(f"Historical DNS lookup completed in {time.time() - start_time:.2f}s")
             return response.json()  # Assuming it returns JSON with historical DNS info
@@ -144,7 +146,7 @@ def enumerate_subdomains(domain):
     url = f'https://api.securitytrails.com/v1/domain/{domain}/subdomains'
     headers = {'APIKEY': SECURITY_TRAILS_API_KEY}
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=HTTP_REQUEST_TIMEOUT)
         if response.status_code == 200:
             logger.info(f"Subdomain enumeration completed in {time.time() - start_time:.2f}s")
             return response.json().get('subdomains', [])  # Return subdomains list
@@ -161,7 +163,7 @@ def get_ssl_cert_logs(domain):
     start_time = time.time()
     url = f"https://crt.sh/?q={domain}&output=json"
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=HTTP_REQUEST_TIMEOUT)
         if response.status_code == 200:
             cert_data = response.json()
             logger.info(f"SSL certificate lookup completed in {time.time() - start_time:.2f}s")
@@ -179,7 +181,7 @@ def get_shodan_info(ip):
     start_time = time.time()
     url = f"https://api.shodan.io/shodan/host/{ip}?key={SHODAN_API_KEY}"
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=HTTP_REQUEST_TIMEOUT)
         if response.status_code == 200:
             logger.info(f"Shodan lookup completed in {time.time() - start_time:.2f}s")
             return response.json()  # Return Shodan info
@@ -529,12 +531,12 @@ def analyze_domain_for_response(domain):
         # Get IP address from DNS
         ip_address = dns_info[0] if isinstance(dns_info, list) and dns_info else None
         
-        # Phase 2: Run ALL remaining lookups concurrently
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        # Phase 2: Run the externally visible lookups concurrently.
+        # Keep optional enrichments off the critical path unless they are used in the response.
+        with ThreadPoolExecutor(max_workers=4) as executor:
             futures = {}
             futures['historical_dns'] = executor.submit(get_historical_dns, domain)
             futures['subdomains'] = executor.submit(enumerate_subdomains, domain)
-            futures['ssl_info'] = executor.submit(get_ssl_cert_logs, domain)
             if ip_address:
                 futures['asn_info'] = executor.submit(get_asn_info, ip_address)
                 futures['shodan_info'] = executor.submit(get_shodan_info, ip_address)
@@ -542,7 +544,6 @@ def analyze_domain_for_response(domain):
             # Collect results
             historical_dns = futures['historical_dns'].result()
             subdomains = futures['subdomains'].result()
-            ssl_info = futures['ssl_info'].result()
             asn_info = futures.get('asn_info', None)
             asn_info = asn_info.result() if asn_info else {}
             shodan_info = futures.get('shodan_info', None)
@@ -560,10 +561,14 @@ def analyze_domain_for_response(domain):
         location = f"{asn_info.get('city', 'Unknown')}, {asn_info.get('region', 'Unknown')}, {asn_info.get('country', 'Unknown')}"
         summary = f"Host IP Address: {ip_address or 'N/A'}, Location: {location}"
 
-        # Phase 3: AI risk score (needs whois_info + asn_info)
-        risk_score = calculate_ai_risk_score(domain, whois_info, dns_info, asn_info)
+        # Phase 3: Derive the final security assessment concurrently once shared inputs are ready.
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            risk_score_future = executor.submit(calculate_ai_risk_score, domain, whois_info, dns_info, asn_info)
+            risk_factors_future = executor.submit(get_risk_factors, whois_info, dns_info, asn_info)
+            risk_score = risk_score_future.result()
+            risk_factors = risk_factors_future.result()
+
         is_suspicious = risk_score > 60
-        risk_factors = get_risk_factors(whois_info, dns_info, asn_info)
         
         logger.info(f"Phase 3 (AI risk score) completed in {time.time() - start_time:.2f}s")
         

@@ -7,6 +7,10 @@ import { useToast } from "@/hooks/use-toast";
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
+type PdfWithAutoTable = jsPDF & {
+  autoTable: (options: Record<string, unknown>) => void;
+};
+
 export default function TestPdfPage() {
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
@@ -20,7 +24,7 @@ export default function TestPdfPage() {
         orientation: 'portrait',
         unit: 'mm',
         format: 'a4'
-      });
+      }) as PdfWithAutoTable;
       
       // Add title
       doc.setFontSize(22);

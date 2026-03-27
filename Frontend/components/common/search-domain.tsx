@@ -36,7 +36,7 @@ export function SearchDomain({
       if (onSearch) {
         onSearch(searchQuery.trim());
       } else {
-        router.push(`/analyze?domain=${encodeURIComponent(searchQuery.trim())}`);
+        router.push(`/analyze/results?domain=${encodeURIComponent(searchQuery.trim())}`);
       }
     }
   };
