@@ -39,6 +39,7 @@ export function PDFViewer({ url, fileName = 'document.pdf' }: PDFViewerProps) {
     };
 
     loadPDF();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
 
   const renderPage = async (pdf: PDFDocumentProxy, pageNumber: number) => {

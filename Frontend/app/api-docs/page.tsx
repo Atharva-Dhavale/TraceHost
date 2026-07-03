@@ -115,9 +115,9 @@ export default function APIDocsPage() {
             </CardHeader>
             <CardContent>
               <p className="mb-4">All API requests should be made to the following base URL:</p>
-              <CodeBlock 
-                code="https://api.tracehost.com/api" 
-                id="base-url" 
+              <CodeBlock
+                code="https://api.tracehost.com/api"
+                id="base-url"
               />
               <p className="mt-4 text-sm text-muted-foreground">
                 Note: Replace with your actual API domain if self-hosting the service.
@@ -136,7 +136,7 @@ export default function APIDocsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <p>
-                All API requests must include your API key in the request headers. You can obtain 
+                All API requests must include your API key in the request headers. You can obtain
                 an API key from your account dashboard.
               </p>
               <div className="flex items-center space-x-2 mb-4">
@@ -144,9 +144,9 @@ export default function APIDocsPage() {
                 <h3 className="font-medium">API Key Authentication</h3>
               </div>
               <p className="mb-2">Include your API key in the request headers:</p>
-              <CodeBlock 
-                code={`Authorization: Bearer YOUR_API_KEY`} 
-                id="auth-header" 
+              <CodeBlock
+                code={`Authorization: Bearer YOUR_API_KEY`}
+                id="auth-header"
               />
               <div className="bg-muted p-4 rounded-md mt-4">
                 <h4 className="font-medium mb-2">Security Best Practices</h4>
@@ -181,12 +181,12 @@ export default function APIDocsPage() {
                   <h4 className="font-medium text-sm">Query Parameters</h4>
                   <ul className="list-disc list-inside space-y-1 text-sm">
                     <li><code>domain</code> (required) - The domain to analyze</li>
-                    <li><code>streaming</code> (optional) - Set to 'true' to receive streaming response for long analyses</li>
+                    <li><code>streaming</code> (optional) - Set to {`'true'`} to receive streaming response for long analyses</li>
                   </ul>
                 </div>
                 <div className="space-y-2">
                   <h4 className="font-medium text-sm">Response</h4>
-                  <CodeBlock 
+                  <CodeBlock
                     code={`{
   "Domain": "example.com",
   "Domain_Exists": true,
@@ -206,14 +206,14 @@ export default function APIDocsPage() {
     "risk_score": 25
   },
   "AI_Summary": "Domain analysis and security assessment..."
-}`} 
-                    id="analyze-response" 
+}`}
+                    id="analyze-response"
                   />
                 </div>
               </div>
-              
+
               <Separator />
-              
+
               <div className="space-y-4">
                 <div className="flex items-center space-x-2">
                   <Badge className="bg-blue-500">GET</Badge>
@@ -227,9 +227,9 @@ export default function APIDocsPage() {
                   </ul>
                 </div>
               </div>
-              
+
               <Separator />
-              
+
               <div className="space-y-4">
                 <div className="flex items-center space-x-2">
                   <Badge className="bg-green-500">POST</Badge>
@@ -238,18 +238,18 @@ export default function APIDocsPage() {
                 <p>Flag or unflag a domain for further investigation.</p>
                 <div className="space-y-2">
                   <h4 className="font-medium text-sm">Request Body</h4>
-                  <CodeBlock 
+                  <CodeBlock
                     code={`{
   "domain": "example.com",
   "flag": true  // true to flag, false to unflag
-}`} 
-                    id="flag-request" 
+}`}
+                    id="flag-request"
                   />
                 </div>
               </div>
-              
+
               <Separator />
-              
+
               <div className="space-y-4">
                 <div className="flex items-center space-x-2">
                   <Badge className="bg-blue-500">GET</Badge>
@@ -264,9 +264,9 @@ export default function APIDocsPage() {
                   </ul>
                 </div>
               </div>
-              
+
               <Separator />
-              
+
               <div className="space-y-4">
                 <div className="flex items-center space-x-2">
                   <Badge className="bg-blue-500">GET</Badge>
@@ -298,7 +298,7 @@ export default function APIDocsPage() {
             <CardContent className="space-y-6">
               <div className="space-y-4">
                 <h3 className="font-medium">JavaScript (fetch)</h3>
-                <CodeBlock 
+                <CodeBlock
                   code={`// Analyze a domain
 const analyzeDomain = async (domain) => {
   try {
@@ -325,14 +325,14 @@ const analyzeDomain = async (domain) => {
 // Usage
 analyzeDomain('example.com')
   .then(data => console.log(data))
-  .catch(error => console.error(error));`} 
-                  id="js-example" 
+  .catch(error => console.error(error));`}
+                  id="js-example"
                 />
               </div>
-              
+
               <div className="space-y-4">
                 <h3 className="font-medium">Python (requests)</h3>
-                <CodeBlock 
+                <CodeBlock
                   code={`import requests
 
 def analyze_domain(domain):
@@ -354,14 +354,14 @@ def analyze_domain(domain):
 
 # Usage
 result = analyze_domain("example.com")
-print(result)`} 
-                  id="python-example" 
+print(result)`}
+                  id="python-example"
                 />
               </div>
-              
+
               <div className="space-y-4">
                 <h3 className="font-medium">cURL</h3>
-                <CodeBlock 
+                <CodeBlock
                   code={`# Analyze a domain
 curl -X GET "https://api.tracehost.com/api/analyze?domain=example.com" \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
@@ -371,8 +371,8 @@ curl -X GET "https://api.tracehost.com/api/analyze?domain=example.com" \\
 curl -X POST "https://api.tracehost.com/api/flag_domain" \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"domain": "example.com", "flag": true}'`} 
-                  id="curl-example" 
+  -d '{"domain": "example.com", "flag": true}'`}
+                  id="curl-example"
                 />
               </div>
             </CardContent>
@@ -427,19 +427,19 @@ curl -X POST "https://api.tracehost.com/api/flag_domain" \\
                   </table>
                 </div>
               </div>
-              
+
               <div className="space-y-4">
                 <h3 className="font-medium">Error Response Format</h3>
-                <CodeBlock 
+                <CodeBlock
                   code={`{
   "error": "Error message here",
   "message": "Additional details about the error",
   "status_code": 400
-}`} 
-                  id="error-response" 
+}`}
+                  id="error-response"
                 />
               </div>
-              
+
               <div className="space-y-4">
                 <h3 className="font-medium">Rate Limits</h3>
                 <p>
@@ -454,14 +454,14 @@ curl -X POST "https://api.tracehost.com/api/flag_domain" \\
                 <p className="mt-2">
                   Rate limit headers are included in API responses:
                 </p>
-                <CodeBlock 
+                <CodeBlock
                   code={`X-RateLimit-Limit: 1000
 X-RateLimit-Remaining: 985
-X-RateLimit-Reset: 1623459600`} 
-                  id="rate-limit-headers" 
+X-RateLimit-Reset: 1623459600`}
+                  id="rate-limit-headers"
                 />
               </div>
-              
+
               <div className="p-4 border rounded-md bg-amber-50 text-amber-900">
                 <h3 className="font-medium mb-2">Domain Analysis Timeout</h3>
                 <p className="text-sm">

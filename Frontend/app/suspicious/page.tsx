@@ -52,16 +52,16 @@ export default function SuspiciousPage() {
     const fetchDomains = async () => {
       try {
         setIsLoading(true);
-        
+
         const params: SuspiciousDomainsParams = {
           page: currentPage,
           limit: itemsPerPage,
           search: debouncedSearchQuery,
           filter: activeFilter
         };
-        
+
         const data = await getSuspiciousDomains(params);
-        
+
         setDomains(data.domains || []);
         setTotalDomains(data.total || 0);
         setError(null);
@@ -80,28 +80,27 @@ export default function SuspiciousPage() {
   const handleExport = async () => {
     try {
       setIsExporting(true);
-      
+
       const params: ExportParams = {
         search: debouncedSearchQuery,
         filter: activeFilter
       };
-      
-      const pdfData = await exportSuspiciousDomains(params);
-      
+
+      const csvData = await exportSuspiciousDomains(params);
+
       // Create blob and download
-      const blob = new Blob([pdfData], { type: 'application/pdf' });
-      const url = window.URL.createObjectURL(blob);
+      const url = window.URL.createObjectURL(csvData);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'suspicious-domains.pdf';
+      a.download = 'suspicious-domains.csv';
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      
+
       toast({
         title: "Export Successful",
-        description: "The PDF has been downloaded to your device.",
+        description: "The CSV has been downloaded to your device.",
       });
     } catch (err) {
       console.error("Error exporting domains:", err);
@@ -114,7 +113,7 @@ export default function SuspiciousPage() {
       setIsExporting(false);
     }
   };
-  
+
   return (
     <main className="flex-1 animate-fade-in suspicious-page-content mt-5">
       <div className="flex flex-col space-y-6 container mx-auto">
@@ -168,8 +167,8 @@ export default function SuspiciousPage() {
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" size="sm" className="h-9 border-accent/20 hover:border-accent/40">
                         <Filter className="mr-2 h-4 w-4" />
-                        {activeFilter ? 
-                          activeFilter.charAt(0).toUpperCase() + activeFilter.slice(1) + " Risk" : 
+                        {activeFilter ?
+                          activeFilter.charAt(0).toUpperCase() + activeFilter.slice(1) + " Risk" :
                           "All Domains"}
                       </Button>
                     </DropdownMenuTrigger>
@@ -249,34 +248,32 @@ export default function SuspiciousPage() {
                             </TableCell>
                             <TableCell>
                               <Badge
-                                className={`px-2 py-1 ${
-                                  domain.risk_score >= 70
+                                className={`px-2 py-1 ${domain.risk_score >= 70
                                     ? "badge-destructive"
                                     : domain.risk_score >= 40
-                                    ? "badge-warning"
-                                    : "badge-outline"
-                                }`}
+                                      ? "badge-warning"
+                                      : "badge-outline"
+                                  }`}
                               >
                                 {domain.risk_score}
                               </Badge>
                             </TableCell>
-                            <TableCell className="hidden md:table-cell">{formatDate(domain.detection_date)}</TableCell>
+                            <TableCell className="hidden md:table-cell">{formatDate(domain.scan_date)}</TableCell>
                             <TableCell className="hidden md:table-cell">
                               <Badge
-                                className={`px-2 py-1 ${
-                                  domain.status === "active"
+                                className={`px-2 py-1 ${domain.status === "active"
                                     ? "badge-destructive"
                                     : domain.status === "monitoring"
-                                    ? "badge-warning"
-                                    : "badge-outline"
-                                }`}
+                                      ? "badge-warning"
+                                      : "badge-outline"
+                                  }`}
                               >
                                 {domain.status}
                               </Badge>
                             </TableCell>
                             <TableCell className="text-right">
                               <Button variant="outline" size="sm" className="gradient-border" asChild>
-                                <a href={`/analyze/results?domain=${domain.domain}`}>
+                                <a href={`/analyze?domain=${domain.domain}`}>
                                   View Details
                                 </a>
                               </Button>
@@ -313,9 +310,9 @@ export default function SuspiciousPage() {
                               : currentPage >= Math.ceil(totalDomains / itemsPerPage) - 1
                                 ? Math.ceil(totalDomains / itemsPerPage) - 2 + i
                                 : currentPage - 1 + i;
-                            
+
                             if (page > Math.ceil(totalDomains / itemsPerPage)) return null;
-                            
+
                             return (
                               <PaginationItem key={page}>
                                 <PaginationLink

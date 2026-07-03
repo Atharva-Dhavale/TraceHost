@@ -46,7 +46,7 @@ export function Header() {
   }, []);
 
   const handleSearch = (domain: string) => {
-    router.push(`/analyze/results?domain=${encodeURIComponent(domain)}`);
+    router.push(`/analyze?domain=${encodeURIComponent(domain)}`);
     setIsSearchOpen(false);
   };
 

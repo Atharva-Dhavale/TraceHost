@@ -9,7 +9,8 @@ import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/components/ui/use-toast";
 import { analyzeDomain, flagDomain, DomainAnalysisResponse } from "@/lib/api";
-import { ArrowUpRight, AlertTriangle, Calendar, Globe, Server, Shield, Database, Download, Flag, MapPin, CheckCircle2, ShieldAlert, Info, BookText, Cpu, Lock, User } from "lucide-react";
+import RiskBreakdown from "@/components/analyze/risk-breakdown";
+import { ArrowUpRight, AlertTriangle, Calendar, Globe, Server, Shield, Database, Download, Flag, MapPin, CheckCircle2, Info, BookText, Cpu, Lock, User, Activity, Wifi } from "lucide-react";
 import { GoogleMap } from "@/components/analyze/google-map";
 import { AnimatePresence, motion } from "framer-motion";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -48,13 +49,6 @@ interface DomainResultsProps {
   domain: string;
 }
 
-type HistoricalDnsEntry = {
-  date?: string | number | null;
-  type?: string | number | null;
-  value?: string | number | null;
-  ttl?: string | number | null;
-};
-
 export function DomainResults({ domain }: DomainResultsProps) {
   const [isFlagged, setIsFlagged] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -72,10 +66,10 @@ export function DomainResults({ domain }: DomainResultsProps) {
       try {
         // Use a worker or setTimeout to prevent UI thread blocking
         await new Promise(resolve => setTimeout(resolve, 0));
-        
+
         // Break up the request and processing into smaller chunks
         const result = await analyzeDomain(domain);
-        
+
         // Defer state updates to prevent UI freezing
         window.requestAnimationFrame(() => {
           setData(result);
@@ -83,13 +77,13 @@ export function DomainResults({ domain }: DomainResultsProps) {
         });
       } catch (err: any) {
         console.error('Error fetching domain data:', err);
-        
+
         // Improved error handling with axios error structure
-        const errorMessage = err.response?.data?.message || 
-                            err.response?.data?.error || 
-                            err.message || 
-                            'Failed to analyze domain';
-        
+        const errorMessage = err.response?.data?.message ||
+          err.response?.data?.error ||
+          err.message ||
+          'Failed to analyze domain';
+
         // Defer error state update
         window.requestAnimationFrame(() => {
           setError(errorMessage);
@@ -103,27 +97,27 @@ export function DomainResults({ domain }: DomainResultsProps) {
 
   const handleFlag = async () => {
     if (!domain) return;
-    
+
     try {
       await flagDomain(domain, !isFlagged);
       setIsFlagged(!isFlagged);
-      
+
       toast({
         title: !isFlagged ? "Domain Flagged" : "Flag Removed",
-        description: !isFlagged 
-          ? `${domain} has been flagged for further investigation` 
+        description: !isFlagged
+          ? `${domain} has been flagged for further investigation`
           : `Flag removed from ${domain}`,
         variant: !isFlagged ? "destructive" : "default",
       });
     } catch (err: any) {
       console.error("Error flagging domain:", err);
-      
+
       // Improved error handling with axios error structure
-      const errorMessage = err.response?.data?.message || 
-                          err.response?.data?.error || 
-                          err.message || 
-                          'Failed to update flag status';
-      
+      const errorMessage = err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        'Failed to update flag status';
+
       toast({
         title: "Error",
         description: errorMessage,
@@ -134,7 +128,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
 
   const handleExport = async (format: 'pdf' | 'csv') => {
     if (!domain || !data) return;
-    
+
     try {
       if (format === 'pdf') {
         // Show loading toast
@@ -142,13 +136,13 @@ export function DomainResults({ domain }: DomainResultsProps) {
           title: "Generating PDF",
           description: "Please wait while your PDF is being generated...",
         });
-        
+
         try {
           // Import jsPDF and autoTable only on the client side when needed
           const jsPDFModule = await import('jspdf');
           const jsPDF = jsPDFModule.default;
           await import('jspdf-autotable');
-          
+
           // Create a new PDF document
           const doc = new jsPDF({
             orientation: 'portrait',
@@ -160,7 +154,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
           doc.setFontSize(20);
           doc.setTextColor(99, 102, 241); // Primary color
           doc.text('Domain Analysis Report', doc.internal.pageSize.width / 2, 20, { align: 'center' });
-          
+
           // Add domain information
           doc.setFontSize(12);
           doc.setTextColor(0, 0, 0);
@@ -168,26 +162,26 @@ export function DomainResults({ domain }: DomainResultsProps) {
           doc.text(`Analysis Date: ${new Date().toLocaleDateString()}`, 20, 37);
           doc.setDrawColor(220, 220, 220);
           doc.line(20, 40, doc.internal.pageSize.width - 20, 40);
-          
+
           // Add risk score section
           doc.setFontSize(16);
           doc.setTextColor(99, 102, 241);
           doc.text('Risk Score Analysis', 20, 50);
-          
+
           const riskScore = data.Security_Analysis?.risk_score || 0;
           const riskLevel = getRiskLevel(riskScore);
-          const riskColor = 
+          const riskColor =
             riskScore >= 70 ? [239, 68, 68] : // red
-            riskScore >= 40 ? [245, 158, 11] : // amber
-            [34, 197, 94]; // green
-          
+              riskScore >= 40 ? [245, 158, 11] : // amber
+                [34, 197, 94]; // green
+
           doc.setFontSize(12);
           doc.setTextColor(0, 0, 0);
           doc.text(`Risk Score: ${riskScore}/100`, 25, 58);
           doc.setTextColor(riskColor[0], riskColor[1], riskColor[2]);
           doc.text(`Risk Level: ${riskLevel}`, 25, 65);
           doc.setTextColor(0, 0, 0);
-          
+
           // Add domain exists warning if applicable
           if (data.Domain_Exists === false) {
             doc.setFillColor(254, 226, 226);
@@ -196,16 +190,16 @@ export function DomainResults({ domain }: DomainResultsProps) {
             doc.text('This domain does not exist. It cannot be resolved to an IP address.', 25, 78);
             doc.setTextColor(0, 0, 0);
           }
-          
+
           // Add server details
           let yPos = data.Domain_Exists === false ? 95 : 75;
-          
+
           if (data.Domain_Exists !== false) {
             doc.setFontSize(16);
             doc.setTextColor(99, 102, 241);
             doc.text('Server Information', 20, yPos);
             yPos += 8;
-            
+
             doc.setFontSize(11);
             doc.setTextColor(0, 0, 0);
             doc.text(`IP Address: ${data.IP_Address || 'N/A'}`, 25, yPos);
@@ -215,14 +209,14 @@ export function DomainResults({ domain }: DomainResultsProps) {
             doc.text(`ASN: ${data.ASN_Info?.asn || 'N/A'}`, 25, yPos);
             yPos += 10;
           }
-          
+
           // Add registration details only if domain exists
           if (data.Domain_Exists !== false) {
             doc.setFontSize(16);
             doc.setTextColor(99, 102, 241);
             doc.text('Domain Registration', 20, yPos);
             yPos += 8;
-            
+
             doc.setFontSize(11);
             doc.setTextColor(0, 0, 0);
             doc.text(`Registrar: ${data.Registrar || 'N/A'}`, 25, yPos);
@@ -232,18 +226,18 @@ export function DomainResults({ domain }: DomainResultsProps) {
             doc.text(`Expiration Date: ${formatDate(data.Expiration_Date)}`, 25, yPos);
             yPos += 10;
           }
-          
+
           // Add security issues
           doc.setFontSize(16);
           doc.setTextColor(99, 102, 241);
           doc.text('Security Analysis', 20, yPos);
           yPos += 8;
-          
+
           // Process security issues
           const securityIssues = data.Security_Analysis?.result
             ? formatSecurityResults(data.Security_Analysis.result)
             : ["No specific security issues identified"];
-          
+
           // Use regular for loop instead of entries() to avoid TypeScript error
           for (let i = 0; i < securityIssues.length; i++) {
             // Check if we need a new page
@@ -251,39 +245,39 @@ export function DomainResults({ domain }: DomainResultsProps) {
               doc.addPage();
               yPos = 20;
             }
-            
+
             doc.setFontSize(11);
             doc.setTextColor(0, 0, 0);
             doc.text(`${i + 1}. ${securityIssues[i]}`, 25, yPos);
             yPos += 7;
           }
-          
+
           // Add AI analysis on a new page if available
           if (data.AI_Summary) {
             doc.addPage();
             doc.setFontSize(16);
             doc.setTextColor(99, 102, 241);
             doc.text('AI-Powered Domain Analysis', doc.internal.pageSize.width / 2, 20, { align: 'center' });
-            
+
             // Handle the source acknowledgment
             doc.setFontSize(9);
             doc.setTextColor(128, 128, 128); // Gray color
             doc.text('Analysis generated by AI', doc.internal.pageSize.width / 2, 28, { align: 'center' });
-            
+
             let aiYPosition = 35;
             const sections = data.AI_Summary.split('\n\n');
-            
+
             for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
               const section = sections[sectionIndex];
               const lines = section.split('\n');
               const title = lines[0];
-              
+
               // Check if we need a new page
               if (aiYPosition > 260) {
                 doc.addPage();
                 aiYPosition = 20;
               }
-              
+
               // Add section title
               if (title) {
                 doc.setFontSize(13);
@@ -291,7 +285,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
                 doc.text(title, 20, aiYPosition);
                 aiYPosition += 8;
               }
-              
+
               // Add content
               doc.setFontSize(10);
               doc.setTextColor(0, 0, 0);
@@ -300,28 +294,28 @@ export function DomainResults({ domain }: DomainResultsProps) {
                   doc.addPage();
                   aiYPosition = 20;
                 }
-                
+
                 // Check if line is a bullet point
                 const line = lines[i];
                 const leftPadding = line.startsWith('-') ? 25 : 20;
-                
+
                 // Calculate text width to implement text wrapping
                 const textWidth = doc.internal.pageSize.width - leftPadding - 20; // 20mm margin on right
                 const textLines = doc.splitTextToSize(line, textWidth);
-                
+
                 for (let j = 0; j < textLines.length; j++) {
                   doc.text(textLines[j], leftPadding, aiYPosition);
                   aiYPosition += 6;
                 }
               }
-              
+
               aiYPosition += 5;
             }
           }
-          
+
           // Save the document
           doc.save(`${domain}-analysis.pdf`);
-          
+
           toast({
             title: "Export Successful",
             description: "Analysis exported as PDF",
@@ -345,13 +339,13 @@ export function DomainResults({ domain }: DomainResultsProps) {
         link.style.display = 'none';
         document.body.appendChild(link);
         link.click();
-        
+
         // Clean up
         setTimeout(() => {
           document.body.removeChild(link);
           URL.revokeObjectURL(url);
         }, 100);
-        
+
         toast({
           title: "Export Successful",
           description: "Analysis exported as CSV",
@@ -435,8 +429,8 @@ export function DomainResults({ domain }: DomainResultsProps) {
             <Download className="mr-2 h-4 w-4" />
             Export CSV
           </Button>
-          <Button 
-            variant={isFlagged ? "default" : "destructive"} 
+          <Button
+            variant={isFlagged ? "default" : "destructive"}
             onClick={handleFlag}
           >
             <Flag className="mr-2 h-4 w-4" />
@@ -457,55 +451,54 @@ export function DomainResults({ domain }: DomainResultsProps) {
                   {riskScore}/100
                 </span>
                 <Badge
-                  className={`px-2 py-0.5 ${
-                    riskScore >= 70
-                      ? "bg-destructive"
-                      : riskScore >= 40
+                  className={`px-2 py-0.5 ${riskScore >= 70
+                    ? "bg-destructive"
+                    : riskScore >= 40
                       ? "bg-amber-500"
                       : "bg-green-500"
-                  }`}
+                    }`}
                 >
                   {riskScore >= 70
                     ? "High Risk"
                     : riskScore >= 40
-                    ? "Medium Risk"
-                    : "Low Risk"}
+                      ? "Medium Risk"
+                      : "Low Risk"}
                 </Badge>
               </div>
-              
+
               <div className="mt-2">
                 <div className="risk-score-container w-full"></div>
-                <div 
+                <div
                   className="relative h-0"
-                  style={{ 
+                  style={{
                     top: "-8px",
-                    left: `${Math.min(Math.max(riskScore, 1), 100)}%` 
+                    left: `${Math.min(Math.max(riskScore, 1), 100)}%`
                   }}
                 >
                   <div className="risk-score-marker"></div>
                 </div>
               </div>
-              
+
               <div className="flex justify-between text-xs text-muted-foreground mt-1">
                 <span>Low Risk</span>
                 <span>Medium Risk</span>
                 <span>High Risk</span>
               </div>
-              
+
               <div className="mt-3 p-3 rounded-md border">
                 <p className="font-medium">
                   {riskScore >= 70
                     ? "Potentially malicious domain detected"
                     : riskScore >= 40
-                    ? "Some suspicious indicators found"
-                    : "Domain appears to be safe"}
+                      ? "Some suspicious indicators found"
+                      : "Domain appears to be safe"}
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
                   {riskScore >= 70
                     ? "This domain shows high-risk characteristics that may indicate malicious activity."
                     : riskScore >= 40
-                    ? "This domain has some suspicious patterns but may be legitimate."
-                    : "No significant security concerns detected with this domain."
+                      ? "This domain has some suspicious patterns but may be legitimate."
+                      : "No significant security concerns detected with this domain."
                   }
                 </p>
               </div>
@@ -541,8 +534,8 @@ export function DomainResults({ domain }: DomainResultsProps) {
                     {serverInfo.coordinates.lat.toFixed(4)}, {serverInfo.coordinates.lng.toFixed(4)}
                   </span>
                 </div>
-                <GoogleMap 
-                  location={serverInfo.location} 
+                <GoogleMap
+                  location={serverInfo.location}
                   coordinates={serverInfo.coordinates}
                   className="h-[180px] w-full"
                 />
@@ -575,16 +568,56 @@ export function DomainResults({ domain }: DomainResultsProps) {
       </div>
 
       <Tabs defaultValue="summary" className="w-full">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-8">
           <TabsTrigger value="summary">Summary</TabsTrigger>
           <TabsTrigger value="ai-analysis">AI Analysis</TabsTrigger>
+          <TabsTrigger value="threat-intel">Threat Intel</TabsTrigger>
           <TabsTrigger value="whois">WHOIS</TabsTrigger>
           <TabsTrigger value="dns">DNS & SSL</TabsTrigger>
           <TabsTrigger value="subdomains">Subdomains</TabsTrigger>
-          <TabsTrigger value="security">Security Analysis</TabsTrigger>
+          <TabsTrigger value="security">Security</TabsTrigger>
+          <TabsTrigger value="risk-analysis">Risk Analysis</TabsTrigger>
         </TabsList>
-        
+
         <TabsContent value="summary" className="space-y-4 pt-4">
+          {/* Phishing alert banner — shown when brand impersonation detected */}
+          {data?.Risk_Breakdown?.phishing && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-red-500 mb-0.5">
+                  BrandShield™ Alert — Phishing Detected
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  This domain resembles{" "}
+                  <span className="font-mono font-semibold text-foreground">
+                    {data.Risk_Breakdown.phishing.brand}.com
+                  </span>{" "}
+                  with{" "}
+                  <span className="font-semibold text-red-400">
+                    {data.Risk_Breakdown.phishing.similarity}% similarity
+                  </span>. Do not enter credentials on this site.
+                </p>
+              </div>
+            </div>
+          )}
+          {/* URLhaus threat intel banner */}
+          {data?.Threat_Intel?.feeds?.urlhaus?.listed === true && (
+            <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 p-4 flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-orange-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-orange-500 mb-0.5">
+                  IntelFeed™ Alert — Listed on URLhaus
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  This domain is listed on URLhaus (abuse.ch) threat intelligence database
+                  {data.Threat_Intel.feeds.urlhaus.active_urls
+                    ? ` with ${data.Threat_Intel.feeds.urlhaus.active_urls} active malicious URL(s)`
+                    : ""}.
+                </p>
+              </div>
+            </div>
+          )}
           <Card>
             <CardHeader>
               <CardTitle>Domain Summary</CardTitle>
@@ -618,7 +651,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
                     </div>
                   </dl>
                 </div>
-                
+
                 <div>
                   <h3 className="font-semibold flex items-center">
                     <User className="mr-2 h-4 w-4" /> Registration Information
@@ -644,7 +677,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
                   </dl>
                 </div>
               </div>
-              
+
               <div>
                 <h3 className="font-semibold flex items-center">
                   <AlertTriangle className="mr-2 h-4 w-4" /> Risk Assessment
@@ -659,20 +692,41 @@ export function DomainResults({ domain }: DomainResultsProps) {
                   ))}
                 </ul>
               </div>
-              
+
               {data.AI_Summary && (
                 <div>
                   <h3 className="font-semibold flex items-center">
-                    <Shield className="mr-2 h-4 w-4 text-primary" /> AI Analysis
+                    <Shield className="mr-2 h-4 w-4 text-primary" /> AI Analysis Summary
                   </h3>
                   <Separator className="my-2" />
-                  <div className="bg-accent/5 rounded-md p-4 border border-accent/10">
-                    {data.AI_Summary.split('\n\n')[0].split('\n').slice(1).map((paragraph, index) => (
-                      <p key={index} className="text-sm mb-2">{paragraph}</p>
-                    ))}
-                    <Button 
-                      variant="link" 
-                      className="text-primary text-xs p-0 h-auto" 
+                  <div className="bg-accent/5 rounded-md p-4 border border-accent/10 space-y-3">
+                    {(() => {
+                      // Parse the AI Summary to extract meaningful content
+                      const sections = data.AI_Summary!.split('\n\n').filter(s => s.trim());
+                      // Show the first 2 sections as preview (Summary + Domain Analysis)
+                      const previewSections = sections.slice(0, 2);
+                      return previewSections.map((section, sIdx) => {
+                        const lines = section.trim().split('\n').filter(l => l.trim());
+                        const title = lines[0];
+                        const content = lines.slice(1);
+                        return (
+                          <div key={sIdx}>
+                            {title && (
+                              <h4 className="font-semibold text-sm text-primary mb-1">{title}</h4>
+                            )}
+                            {content.map((line, lIdx) => (
+                              <p key={lIdx} className={`text-sm text-muted-foreground leading-relaxed ${line.trim().startsWith('-') || line.trim().match(/^\d+\./) ? 'pl-4 before:content-[""] relative' : ''
+                                }`}>
+                                {line}
+                              </p>
+                            ))}
+                          </div>
+                        );
+                      });
+                    })()}
+                    <Button
+                      variant="link"
+                      className="text-primary text-xs p-0 h-auto"
                       onClick={() => {
                         const tab = document.querySelector('[data-state="inactive"][value="ai-analysis"]');
                         if (tab && tab instanceof HTMLElement) {
@@ -680,70 +734,261 @@ export function DomainResults({ domain }: DomainResultsProps) {
                         }
                       }}
                     >
-                      View full AI analysis
+                      View full AI analysis →
                     </Button>
                   </div>
+                </div>
+              )}
+
+              {/* Threat Intelligence Summary */}
+              {data.Shodan_Info && (
+                <div>
+                  <h3 className="font-semibold flex items-center">
+                    <Activity className="mr-2 h-4 w-4 text-primary" /> Threat Intelligence
+                  </h3>
+                  <Separator className="my-2" />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {data.Shodan_Info && !data.Shodan_Info.error && (
+                      <div className="rounded-md border p-3">
+                        <div className="text-xs text-muted-foreground mb-1">Shodan</div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg font-bold">
+                            {data.Shodan_Info.ports?.length || 0}
+                          </span>
+                          <span className="text-xs text-muted-foreground">open ports</span>
+                          {data.Shodan_Info.vulns && data.Shodan_Info.vulns.length > 0 && (
+                            <Badge className="bg-destructive text-xs">{data.Shodan_Info.vulns.length} vulns</Badge>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    variant="link"
+                    className="text-primary text-xs p-0 h-auto mt-2"
+                    onClick={() => {
+                      const tab = document.querySelector('[data-state="inactive"][value="threat-intel"]');
+                      if (tab && tab instanceof HTMLElement) {
+                        tab.click();
+                      }
+                    }}
+                  >
+                    View full threat intelligence data
+                  </Button>
                 </div>
               )}
             </CardContent>
           </Card>
         </TabsContent>
-        
+
+        {/* Threat Intelligence Tab */}
+        <TabsContent value="threat-intel" className="space-y-4 pt-4">
+          {/* Shodan Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <Wifi className="mr-2 h-5 w-5 text-primary" />
+                Shodan Intelligence
+              </CardTitle>
+              <CardDescription>
+                Network exposure and service discovery data
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {data.Shodan_Info && !data.Shodan_Info.error ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="rounded-md border p-3">
+                      <div className="text-xs text-muted-foreground mb-1">Open Ports</div>
+                      <div className="text-lg font-bold">{data.Shodan_Info.ports?.length || 0}</div>
+                      {data.Shodan_Info.ports && data.Shodan_Info.ports.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {data.Shodan_Info.ports.slice(0, 10).map((port, idx) => (
+                            <Badge key={idx} variant="outline" className="text-xs font-mono">{port}</Badge>
+                          ))}
+                          {data.Shodan_Info.ports.length > 10 && (
+                            <Badge variant="outline" className="text-xs">+{data.Shodan_Info.ports.length - 10} more</Badge>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="rounded-md border p-3">
+                      <div className="text-xs text-muted-foreground mb-1">Organization</div>
+                      <div className="text-sm font-medium truncate" title={data.Shodan_Info.org}>{data.Shodan_Info.org}</div>
+                      <div className="text-xs text-muted-foreground mt-1">{data.Shodan_Info.isp}</div>
+                    </div>
+                    <div className="rounded-md border p-3">
+                      <div className="text-xs text-muted-foreground mb-1">Operating System</div>
+                      <div className="text-sm font-medium">{data.Shodan_Info.os || 'Unknown'}</div>
+                      <div className="text-xs text-muted-foreground mt-1">{data.Shodan_Info.city}, {data.Shodan_Info.country_name}</div>
+                    </div>
+                  </div>
+
+                  {/* Vulnerabilities */}
+                  {data.Shodan_Info.vulns && data.Shodan_Info.vulns.length > 0 && (
+                    <div>
+                      <h4 className="font-medium text-destructive flex items-center mb-2">
+                        <AlertTriangle className="mr-2 h-4 w-4" />
+                        Known Vulnerabilities ({data.Shodan_Info.vulns.length})
+                      </h4>
+                      <div className="flex flex-wrap gap-1">
+                        {data.Shodan_Info.vulns.slice(0, 20).map((vuln, idx) => (
+                          <Badge key={idx} className="bg-destructive/10 text-destructive border-destructive/20 text-xs font-mono">{vuln}</Badge>
+                        ))}
+                        {data.Shodan_Info.vulns.length > 20 && (
+                          <Badge className="bg-destructive/10 text-destructive text-xs">+{data.Shodan_Info.vulns.length - 20} more</Badge>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Services */}
+                  {data.Shodan_Info.services && data.Shodan_Info.services.length > 0 && (
+                    <div>
+                      <h4 className="font-medium mb-2">Detected Services</h4>
+                      <div className="rounded-md border">
+                        <table className="min-w-full divide-y divide-border">
+                          <thead>
+                            <tr className="bg-muted/50">
+                              <th className="px-4 py-2 text-left text-sm font-medium">Port</th>
+                              <th className="px-4 py-2 text-left text-sm font-medium">Transport</th>
+                              <th className="px-4 py-2 text-left text-sm font-medium">Product</th>
+                              <th className="px-4 py-2 text-left text-sm font-medium">Version</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {data.Shodan_Info.services.map((svc, idx) => (
+                              <tr key={idx}>
+                                <td className="px-4 py-2 text-sm font-mono">{svc.port}</td>
+                                <td className="px-4 py-2 text-sm">{svc.transport}</td>
+                                <td className="px-4 py-2 text-sm">{svc.product}</td>
+                                <td className="px-4 py-2 text-sm">{svc.version || '-'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {data.Shodan_Info.hostnames && data.Shodan_Info.hostnames.length > 0 && (
+                    <div>
+                      <h4 className="font-medium mb-2">Hostnames</h4>
+                      <div className="flex flex-wrap gap-1">
+                        {data.Shodan_Info.hostnames.map((hostname, idx) => (
+                          <Badge key={idx} variant="secondary" className="text-xs font-mono">{hostname}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-6 text-muted-foreground">
+                  <Wifi className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>Shodan data is not available{data.Shodan_Info?.error ? `: ${data.Shodan_Info.error}` : ''}</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="ai-analysis" className="space-y-4 pt-4">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center">
-                <Shield className="mr-2 h-5 w-5" />
-                <div>
-                  <h3 className="text-lg font-medium">
-                    AI-Powered Domain Analysis
-                  </h3>
-                </div>
+                <Shield className="mr-2 h-5 w-5 text-primary" />
+                AI-Powered Domain Analysis
               </CardTitle>
               <CardDescription>
-                Comprehensive security assessment powered by AI
+                Comprehensive security assessment powered by AI for <span className="font-semibold">{domain}</span>
               </CardDescription>
             </CardHeader>
             <CardContent>
               {data.AI_Summary ? (
-                <div className="space-y-6">
-                  <div className="rounded-lg overflow-hidden bg-accent/5 border border-accent/10">
-                    <div className="flex items-center space-x-2 p-3 bg-accent/10">
-                      <Shield className="h-4 w-4 text-primary" />
-                      <span className="font-semibold">AI Analysis Result</span>
-                    </div>
-                    <div className="p-4 space-y-6">
-                      {data.AI_Summary.split('\n\n').map((section, index) => {
-                        const [title, ...content] = section.trim().split('\n');
-                        
-                        if (!title) return null;
-                        
-                        return (
-                          <div key={index} className="space-y-2">
-                            {title && (
-                              <h3 className="font-semibold text-primary">{title}</h3>
-                            )}
-                            {content.length > 0 && (
-                              <div className="text-sm space-y-2">
-                                {content.map((paragraph, pIndex) => (
-                                  <p 
-                                    key={pIndex} 
-                                    className={paragraph.startsWith('-') ? 'pl-4' : ''}
-                                  >
-                                    {paragraph}
-                                  </p>
-                                ))}
-                              </div>
-                            )}
+                <div className="space-y-4">
+                  {(() => {
+                    const sections = data.AI_Summary!.split('\n\n').filter(s => s.trim());
+
+                    const getSectionIcon = (title: string) => {
+                      const lower = title.toLowerCase();
+                      if (lower.includes('summary')) return <BookText className="h-4 w-4" />;
+                      if (lower.includes('reputation') || lower.includes('domain')) return <Globe className="h-4 w-4" />;
+                      if (lower.includes('hosting') || lower.includes('infrastructure')) return <Server className="h-4 w-4" />;
+                      if (lower.includes('network') || lower.includes('exposure')) return <Wifi className="h-4 w-4" />;
+                      if (lower.includes('dns') || lower.includes('subdomain')) return <Database className="h-4 w-4" />;
+                      if (lower.includes('risk')) return <AlertTriangle className="h-4 w-4" />;
+                      if (lower.includes('recommend')) return <CheckCircle2 className="h-4 w-4" />;
+                      if (lower.includes('security')) return <Lock className="h-4 w-4" />;
+                      if (lower.includes('technical')) return <Cpu className="h-4 w-4" />;
+                      return <Info className="h-4 w-4" />;
+                    };
+
+                    const getSectionColor = (title: string) => {
+                      const lower = title.toLowerCase();
+                      if (lower.includes('summary')) return 'border-l-primary bg-primary/5';
+                      if (lower.includes('reputation') || lower.includes('domain')) return 'border-l-blue-500 bg-blue-500/5';
+                      if (lower.includes('hosting') || lower.includes('infrastructure')) return 'border-l-indigo-500 bg-indigo-500/5';
+                      if (lower.includes('network') || lower.includes('exposure')) return 'border-l-cyan-500 bg-cyan-500/5';
+                      if (lower.includes('dns') || lower.includes('subdomain')) return 'border-l-violet-500 bg-violet-500/5';
+                      if (lower.includes('risk')) return 'border-l-amber-500 bg-amber-500/5';
+                      if (lower.includes('recommend')) return 'border-l-green-500 bg-green-500/5';
+                      if (lower.includes('security')) return 'border-l-red-500 bg-red-500/5';
+                      if (lower.includes('technical')) return 'border-l-violet-500 bg-violet-500/5';
+                      return 'border-l-gray-400 bg-gray-50/5';
+                    };
+
+                    return sections.map((section, index) => {
+                      const lines = section.trim().split('\n').filter(l => l.trim());
+                      if (lines.length === 0) return null;
+
+                      const title = lines[0];
+                      const content = lines.slice(1);
+
+                      return (
+                        <div
+                          key={index}
+                          className={`rounded-lg border-l-4 p-4 ${getSectionColor(title)}`}
+                        >
+                          <div className="flex items-center gap-2 mb-3">
+                            <div className="text-primary">
+                              {getSectionIcon(title)}
+                            </div>
+                            <h3 className="font-semibold text-base">{title}</h3>
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center space-x-2 text-xs text-muted-foreground">
-                    <Info className="h-3 w-3" />
-                    <span>This analysis was generated by AI based on the collected domain data.</span>
+                          <div className="space-y-2 ml-6">
+                            {content.map((line, lIdx) => {
+                              const trimmed = line.trim();
+                              const isBullet = trimmed.startsWith('-') || trimmed.match(/^\d+\./);
+
+                              if (isBullet) {
+                                const bulletContent = trimmed.startsWith('-')
+                                  ? trimmed.substring(1).trim()
+                                  : trimmed.replace(/^\d+\.\s*/, '');
+                                return (
+                                  <div key={lIdx} className="flex items-start gap-2">
+                                    <span className="text-primary mt-1.5 flex-shrink-0">
+                                      <div className="w-1.5 h-1.5 rounded-full bg-primary" />
+                                    </span>
+                                    <p className="text-sm leading-relaxed">{bulletContent}</p>
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <p key={lIdx} className="text-sm leading-relaxed">
+                                  {trimmed}
+                                </p>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground pt-2 border-t">
+                    <Info className="h-3 w-3 flex-shrink-0" />
+                    <span>This analysis was generated by AI based on collected domain data. Results should be verified independently.</span>
                   </div>
                 </div>
               ) : (
@@ -759,7 +1004,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
             </CardContent>
           </Card>
         </TabsContent>
-        
+
         <TabsContent value="whois" className="space-y-4 pt-4">
           <Card>
             <CardHeader>
@@ -792,7 +1037,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
                     </div>
                   </dl>
                 </div>
-                
+
                 <div>
                   <h3 className="font-semibold">Registrant Information</h3>
                   <Separator className="my-2" />
@@ -817,7 +1062,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
                     </div>
                   </dl>
                 </div>
-                
+
                 <div>
                   <h3 className="font-semibold">Important Dates</h3>
                   <Separator className="my-2" />
@@ -836,16 +1081,14 @@ export function DomainResults({ domain }: DomainResultsProps) {
                     </div>
                   </dl>
                 </div>
-                
+
                 <div>
                   <h3 className="font-semibold">Name Servers</h3>
                   <Separator className="my-2" />
                   <ul className="list-disc pl-5 space-y-1">
                     {Array.isArray(data['Historical_DNS']) && data['Historical_DNS'].length > 0 ? (
-                      (data['Historical_DNS'] as HistoricalDnsEntry[])
-                        .filter((record) => String(record.type || "") === 'NS')
-                        .map((record, index) => (
-                        <li key={index}>{String(record.value || "N/A")}</li>
+                      data['Historical_DNS'].filter(record => record.type === 'NS').map((record, index) => (
+                        <li key={index}>{record.value}</li>
                       ))
                     ) : (
                       <>
@@ -858,7 +1101,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
             </CardContent>
           </Card>
         </TabsContent>
-        
+
         <TabsContent value="dns" className="space-y-4 pt-4">
           <Card>
             <CardHeader>
@@ -890,7 +1133,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
               </div>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardHeader>
               <CardTitle>SSL Certificate</CardTitle>
@@ -907,7 +1150,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
                     {data.Security_Analysis?.result?.includes("SSL") ? "SSL Certificate Issues Detected" : "SSL Certificate Status Unknown"}
                   </span>
                 </div>
-                
+
                 <div>
                   <h3 className="font-semibold">Certificate Details</h3>
                   <Separator className="my-2" />
@@ -917,7 +1160,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
                     to include SSL certificate data from the crt.sh service.
                   </p>
                 </div>
-                
+
                 <div>
                   <h3 className="font-semibold">Subject Alternative Names</h3>
                   <Separator className="my-2" />
@@ -930,7 +1173,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
             </CardContent>
           </Card>
         </TabsContent>
-        
+
         <TabsContent value="subdomains" className="space-y-4 pt-4">
           <Card>
             <CardHeader>
@@ -960,7 +1203,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
               )}
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardHeader>
               <CardTitle>Historical DNS Data</CardTitle>
@@ -980,11 +1223,11 @@ export function DomainResults({ domain }: DomainResultsProps) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {(data['Historical_DNS'] as HistoricalDnsEntry[]).map((record, index) => (
+                      {data['Historical_DNS'].map((record, index) => (
                         <tr key={index}>
-                          <td className="px-4 py-2 text-sm">{String(record.date || "N/A")}</td>
-                          <td className="px-4 py-2 text-sm">{String(record.type || "A")}</td>
-                          <td className="px-4 py-2 text-sm font-mono break-all">{String(record.value || "N/A")}</td>
+                          <td className="px-4 py-2 text-sm">{record.date || "N/A"}</td>
+                          <td className="px-4 py-2 text-sm">{record.type || "A"}</td>
+                          <td className="px-4 py-2 text-sm font-mono break-all">{record.value || "N/A"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -998,7 +1241,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
             </CardContent>
           </Card>
         </TabsContent>
-        
+
         <TabsContent value="security" className="space-y-4 pt-4">
           <Card>
             <CardHeader>
@@ -1019,7 +1262,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
                     This domain has been flagged as potentially {riskScore > 70 ? "suspicious" : "low risk"} based on multiple risk factors.
                     The overall risk score is <strong>{riskScore}/100</strong>, which indicates a {getRiskLevel(riskScore).toLowerCase()} level of concern.
                   </p>
-                  
+
                   <div className="space-y-4">
                     <div>
                       <h4 className="text-sm font-medium">Risk Factors</h4>
@@ -1032,7 +1275,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
                         ))}
                       </ul>
                     </div>
-                    
+
                     {data.Security_Analysis?.result?.includes("similar") && (
                       <div>
                         <h4 className="text-sm font-medium">Similar Malicious Domains</h4>
@@ -1060,7 +1303,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
                     )}
                   </div>
                 </div>
-                
+
                 <div>
                   <h3 className="font-medium">Recommendation</h3>
                   <Separator className="my-2" />
@@ -1069,14 +1312,14 @@ export function DomainResults({ domain }: DomainResultsProps) {
                       <AlertTriangle className="mr-2 h-5 w-5 mt-0.5" />
                       <div>
                         <h4 className="font-medium">
-                          {riskScore > 70 
-                            ? "Further Investigation Recommended" 
-                            : riskScore > 30 
-                              ? "Monitor This Domain" 
+                          {riskScore > 70
+                            ? "Further Investigation Recommended"
+                            : riskScore > 30
+                              ? "Monitor This Domain"
                               : "Low Risk Domain"}
                         </h4>
                         <p className="text-sm mt-1">
-                          {riskScore > 70 
+                          {riskScore > 70
                             ? `Based on the analysis, this domain shows multiple suspicious characteristics
                                that warrant further investigation. Consider blocking access to this domain
                                while investigation is ongoing.`
@@ -1091,6 +1334,29 @@ export function DomainResults({ domain }: DomainResultsProps) {
                   </div>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Risk Analysis Tab ─────────────────────────────────────────── */}
+        <TabsContent value="risk-analysis" className="space-y-4 pt-4">
+          <Card className="border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Shield className="h-4 w-4 text-primary" />
+                ThreatVector™ Multi-Factor Risk Breakdown
+              </CardTitle>
+              <CardDescription>
+                Comprehensive risk analysis across domain name, registration, infrastructure,
+                and DNS patterns — powered by TraceHost ThreatVector Engine.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <RiskBreakdown
+                breakdown={data?.Risk_Breakdown}
+                threatIntel={data?.Threat_Intel}
+                domain={domain}
+              />
             </CardContent>
           </Card>
         </TabsContent>
@@ -1129,7 +1395,7 @@ function DomainResultsSkeleton() {
 // Function to format dates
 function formatDate(dateStr: string | undefined): string {
   if (!dateStr) return "N/A";
-  
+
   try {
     const date = new Date(dateStr);
     return date.toLocaleDateString("en-US", {
@@ -1154,7 +1420,7 @@ const generateCsv = (data: DomainAnalysisResponse, domain: string): string => {
   // Helper to escape CSV values properly
   const escapeCSV = (value: string | number | undefined | null) => {
     if (value === undefined || value === null) return '';
-    
+
     const stringValue = String(value);
     if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
       return `"${stringValue.replace(/"/g, '""')}"`;
@@ -1179,13 +1445,13 @@ const generateCsv = (data: DomainAnalysisResponse, domain: string): string => {
     ['Domain', domain],
     ['Analysis Date', new Date().toISOString().split('T')[0]],
     [''],
-    
+
     ['Risk Assessment'],
     ['Risk Score', `${data.Security_Analysis?.risk_score || 'N/A'}/100`],
     ['Risk Level', getRiskLevel(data.Security_Analysis?.risk_score || 0)],
     ['Is Suspicious', data.Security_Analysis?.is_suspicious ? 'Yes' : 'No'],
     [''],
-    
+
     ['Server Information'],
     ['IP Address', data.IP_Address || 'N/A'],
     ['Location', `${data.ASN_Info?.city || 'Unknown'}, ${data.ASN_Info?.country || 'Unknown'}`],
@@ -1193,7 +1459,7 @@ const generateCsv = (data: DomainAnalysisResponse, domain: string): string => {
     ['Latitude', data.ASN_Info?.latitude || 'N/A'],
     ['Longitude', data.ASN_Info?.longitude || 'N/A'],
     [''],
-    
+
     ['Registration Information'],
     ['Registrar', data.Registrar || 'N/A'],
     ['Creation Date', formatCsvDate(data.Creation_Date)],
@@ -1203,7 +1469,7 @@ const generateCsv = (data: DomainAnalysisResponse, domain: string): string => {
     ['Registrant Name', data.Registrant_Name || 'N/A'],
     ['Registrant Organization', data.Registrant_Organization || 'N/A'],
     [''],
-    
+
     ['DNS Information']
   ];
 
@@ -1211,11 +1477,7 @@ const generateCsv = (data: DomainAnalysisResponse, domain: string): string => {
   if (data.Historical_DNS && Array.isArray(data.Historical_DNS) && data.Historical_DNS.length > 0) {
     rows.push(['DNS Records']);
     for (const record of data.Historical_DNS) {
-      rows.push([
-        String(record.type || 'A'),
-        String(record.value || 'N/A'),
-        `TTL: ${record.ttl || '3600'}`
-      ]);
+      rows.push([`${record.type || 'A'}`, record.value, `TTL: ${record.ttl || '3600'}`]);
     }
     rows.push(['']);
   }
@@ -1243,8 +1505,8 @@ function generateDnsRecords(data: DomainAnalysisResponse | null): { type: string
   }
 
   return data.Historical_DNS.map(record => ({
-    type: String(record.type || 'A'),
-    value: String(record.value || 'N/A'),
+    type: record.type || 'A',
+    value: record.value || 'N/A',
     ttl: record.ttl ? `${record.ttl} seconds` : 'N/A'
   }));
 }

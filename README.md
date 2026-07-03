@@ -12,14 +12,6 @@
 
 </div>
 
-## 👥 Collaborators
-
-- [Atharva Dhavale](https://github.com/Atharva-Dhavale) 
-- [Harshvardhan Bhosale](https://github.com/Harshbhosale05) 
-- [Sarish Sonawane](https://github.com/Sarish05) 
-- [Aayush Meghal](https://github.com/Assassin2306) 
-- [Kartik Sirsilla](https://github.com/kartiksirsilla09) 
-
 ## ✨ Features
 
 - 🔍 **Domain Analysis**: Analyze domains for suspicious patterns and security risks
@@ -37,22 +29,7 @@ Before you begin, ensure you have the following installed:
 
 - 📦 **Node.js** 18.x or higher
 - 📦 **npm** 9.x or higher
-- 🐍 **Python** 3.9 or higher
-- 📦 **pip** (Python package installer)
-- 🖥️ **Backend dependencies**:
-  - Django 4.2.10
-  - djangorestframework 3.14.0
-  - django-cors-headers 4.3.1
-  - requests 2.31.0
-  - python-whois 0.8.0
-  - dnspython 2.4.2
-  - ipinfo 4.4.3
-  - shodan 1.30.1
-  - google-generativeai 0.3.2
-  - python-decouple 3.8
-  - Pillow 10.2.0
-
-  (All backend dependencies are listed in `Backend/requirements.txt` and will be installed during setup)
+- 🖥️ **Backend server** running (refer to backend documentation)
 
 ### 🔧 Installation
 
@@ -91,86 +68,39 @@ Navigate to [http://localhost:3000](http://localhost:3000) in your browser
    git clone https://github.com/Atharva-Dhavale/TraceHost.git
    cd TraceHost
    
-   # Install dependencies for frontend
-   cd Frontend
+   # Install dependencies
    npm install
    
-   # Create environment file for frontend
+   # Create environment file
    cp .env.example .env
-   cd ..
-   
-   # Set up backend environment
-   cd Backend
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   
-   # Install all backend dependencies from requirements.txt
-   pip install -r requirements.txt
-   
-   # The requirements.txt includes all necessary packages:
-   # - Django, DRF, CORS headers for the API server
-   # - requests, python-whois, dnspython for domain analysis
-   # - ipinfo, shodan for threat intelligence
-   # - google-generativeai for AI-powered analysis
-   # - python-decouple for environment management
-   # - Pillow for image processing
-   
-   # Create environment file for backend
-   cp .env.example .env
-   cd ..
    ```
 
 2. **Configure environment variables**:
-   - Edit `Frontend/.env` file with your API keys and configuration:
-     - `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` for map functionality
-     - `NEXT_PUBLIC_API_URL` pointing to your backend server
-   
-   - Edit `Backend/.env` file with your backend configuration:
-     - Database credentials
-     - API keys for external services
-     - Secret key for Django
+   Edit the `.env` file with your API keys, database connection details, and other required configuration. At minimum, you'll need:
+   - `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` for map functionality
+   - `NEXT_PUBLIC_API_URL` pointing to your backend server
 
-3. **Run backend migrations**:
+3. **Build the project**:
    ```bash
-   cd Backend
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   python manage.py migrate
-   cd ..
+   npm run build
    ```
 
 ### Starting the Application
 
-#### 🚀 Using the Automated Script (Recommended)
-
-The easiest way to run both frontend and backend together:
-
+#### 👨‍💻 Development Mode
+For development with hot reloading:
 ```bash
-# Make the script executable (only needed once)
-chmod +x start-dev.sh
-
-# Run the script
-./start-dev.sh
-```
-
-This script will:
-- Start the Django backend on http://localhost:8000
-- Start the Next.js frontend on http://localhost:3000
-- Create logs in the `logs` directory
-- Allow stopping both servers with Ctrl+C
-
-#### 👨‍💻 Running Manually
-
-**For backend**:
-```bash
-cd Backend
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-python manage.py runserver
-```
-
-**For frontend**:
-```bash
-cd Frontend
 npm run dev
+```
+
+#### 🚀 Production Mode
+For production deployment:
+```bash
+# Build the application
+npm run build
+
+# Start the production server
+npm run start
 ```
 
 ### 🧪 Testing
@@ -318,35 +248,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 Atharva Dhavale - [GitHub Profile](https://github.com/Atharva-Dhavale)
 
-Project Link: [https://github.com/Atharva-Dhavale/TraceHost](https://github.com/Atharva-Dhavale/TraceHost)
-
-## 🔐 Protecting Sensitive Information
-
-To keep your API keys and other sensitive information secure when using this repository:
-
-1. **Environment Variables**: 
-   - Never commit `.env` files containing real credentials
-   - Use the provided `.env.example` files as templates
-   - Copy them to new `.env` files with your actual values: `cp .env.example .env`
-
-2. **Before committing code**:
-   - Check that `.gitignore` is properly excluding sensitive files
-   - Run `git status` to verify no sensitive files are staged
-   - Consider using `git-secret` or similar tools for team-based development
-
-3. **If you've accidentally committed sensitive info**:
-   - Use BFG Repo-Cleaner or `git filter-branch` to remove sensitive data
-   - Change all exposed credentials immediately
-   - Consider these credentials compromised
-
-4. **For CI/CD pipelines**:
-   - Use your platform's secrets management (GitHub Secrets, Vercel Environment Variables, etc.)
-   - Never display environment variables in build logs
-
-5. **Development Best Practices**:
-   - Always ignore `node_modules/` directories (included in `.gitignore`)
-   - Large dependencies should never be committed to the repository
-   - For frontend dependencies, use `package.json` to document requirements
-   - For backend dependencies, use `requirements.txt`
-
-For more information on securing repositories, see [GitHub's guide on removing sensitive data](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository). 
+Project Link: [https://github.com/Atharva-Dhavale/TraceHost](https://github.com/Atharva-Dhavale/TraceHost) 
