@@ -42,4 +42,7 @@ __pycache__/
 venv/
 myvenv/
 *.sqlite3
-staticfiles/ 
+staticfiles/
+
+# logs
+logs/ 
