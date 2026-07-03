@@ -409,19 +409,21 @@ def analyze_domain_for_response(domain: str) -> dict:
         response_data["AI_Summary"] = ai_summary
 
         # ── Persist to MongoDB ────────────────────────────────────────────────
+        was_flagged = mongo_store.is_domain_flagged(domain)
         scan_doc = {
             "domain":          domain,
             "ip_address":      ip_address,
             "risk_score":      risk_score,
             "is_suspicious":   is_suspicious,
-            "is_flagged":      mongo_store.is_domain_flagged(domain),
+            "is_flagged":      was_flagged,
             "country":         whois_info.get("country"),
             "city":            asn_info.get("city"),
             "registrar":       whois_info.get("registrar"),
             "creation_date":   whois_info.get("creation_date"),
             "expiration_date": whois_info.get("expiration_date"),
             "category":        "Phishing" if risk_breakdown.get("phishing") else (
-                               "Suspicious" if is_suspicious else "Clean"),
+                               "Suspicious" if is_suspicious else (
+                               "Flagged" if was_flagged else "Clean")),
             "status":          "Active",
             "risk_breakdown":  risk_breakdown,
             "threat_intel":    threat_intel,

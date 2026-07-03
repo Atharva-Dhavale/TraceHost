@@ -133,7 +133,7 @@ Environment variables are split across two files — see `.env.example` at the r
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Google Maps API key for location visualization | – |
-| `NEXT_PUBLIC_API_URL` | Base URL for API requests | `http://localhost:8000/api` |
+| `NEXT_PUBLIC_API_URL` | Backend origin (the client appends `/api/...` itself) | `http://localhost:8000` |
 | `NEXT_PUBLIC_BACKEND_URL` | Backend server URL | `http://localhost:8000` |
 | `NEXT_PUBLIC_API_TOKEN` | Optional bearer token sent with API requests | – |
 | `NEXT_PUBLIC_ENABLE_API_LOGGING` | Enable detailed API request logging | `true` |

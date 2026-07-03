@@ -64,13 +64,25 @@ def save_scan(scan_doc: dict) -> str:
 
 
 def flag_domain(domain: str, flag: bool = True) -> bool:
-    """Set or clear the is_flagged flag on the most recent scan for a domain."""
+    """Set or clear the is_flagged flag on every scan for a domain."""
     try:
         db = get_db()
-        db["scans"].update_many(
+        scans = db["scans"]
+        scans.update_many(
             {"domain": domain},
             {"$set": {"is_flagged": flag, "last_flagged_date": datetime.now(timezone.utc)}},
         )
+        if flag:
+            # Surface flagged-but-otherwise-clean domains in the suspicious list.
+            scans.update_many(
+                {"domain": domain, "category": "Clean"},
+                {"$set": {"category": "Flagged"}},
+            )
+        else:
+            scans.update_many(
+                {"domain": domain, "category": "Flagged"},
+                {"$set": {"category": "Clean"}},
+            )
         logger.info("Domain %s %s", domain, "flagged" if flag else "unflagged")
         return True
     except Exception as exc:
@@ -270,7 +282,7 @@ def get_suspicious_domains(
     try:
         db = get_db()
         scans = db["scans"]
-        query: dict = {"is_suspicious": True}
+        query: dict = {"$or": [{"is_suspicious": True}, {"is_flagged": True}]}
 
         if search:
             query["domain"] = {"$regex": search, "$options": "i"}
@@ -287,14 +299,15 @@ def get_suspicious_domains(
             scans.find(
                 query,
                 {"_id": 0, "domain": 1, "risk_score": 1, "category": 1,
-                 "status": 1, "scan_date": 1, "is_suspicious": 1}
+                 "status": 1, "scan_date": 1, "is_suspicious": 1, "is_flagged": 1}
             ).sort("scan_date", DESCENDING).skip((page - 1) * limit).limit(limit)
         )
         domains = []
         for d in docs:
             if isinstance(d.get("scan_date"), datetime):
                 d["scan_date"] = d["scan_date"].isoformat()
-            d.setdefault("category", "Suspicious")
+            if not d.get("category"):
+                d["category"] = "Suspicious" if d.get("is_suspicious") else "Flagged"
             d.setdefault("status", "Active")
             domains.append(d)
 

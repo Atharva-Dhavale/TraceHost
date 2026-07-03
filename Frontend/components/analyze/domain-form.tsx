@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { analyzeDomain } from "@/lib/api";
 
 export function DomainForm() {
   const searchParams = useSearchParams();
@@ -30,23 +29,7 @@ export function DomainForm() {
     }
     
     setIsLoading(true);
-    
-    try {
-      // Call the API to analyze the domain
-      await analyzeDomain(domain.trim());
-      
-      // Redirect to results page
-      router.push(`/analyze/results?domain=${encodeURIComponent(domain.trim())}`);
-    } catch (error) {
-      console.error("Error analyzing domain:", error);
-      toast({
-        title: "Error",
-        description: "Failed to analyze domain. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
+    router.push(`/analyze/${encodeURIComponent(domain.trim())}`);
   };
 
   return (
