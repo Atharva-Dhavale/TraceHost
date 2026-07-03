@@ -30,37 +30,33 @@ logger = logging.getLogger(__name__)
 IPINFO_API_KEY        = config("IPINFO_API_KEY")
 SHODAN_API_KEY        = config("SHODAN_API_KEY")
 SECURITY_TRAILS_API_KEY = config("SECURITY_TRAILS_API_KEY")
-GEMINI_API_KEY        = config("GEMINI_API_KEY")
+OPENROUTER_API_KEY    = config("OPENROUTER_API_KEY")
+OPENROUTER_MODEL      = config("OPENROUTER_MODEL", default="openai/gpt-oss-120b:free")
 
-GEMINI_API_URL = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/"
-    f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-)
-logger.info("Gemini API configured")
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+logger.info("OpenRouter API configured (model: %s)", OPENROUTER_MODEL)
 
 
-# ── Gemini helpers ─────────────────────────────────────────────────────────────
+# ── OpenRouter helpers ────────────────────────────────────────────────────────
 
-def call_gemini_api(prompt, max_output_tokens=256, temperature=0.2):
-    headers = {"Content-Type": "application/json"}
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": temperature,
-            "topP": 0.8,
-            "topK": 40,
-            "maxOutputTokens": max_output_tokens,
-        },
+def call_openrouter_api(prompt, max_output_tokens=256, temperature=0.2):
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
     }
-    resp = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=45)
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+        "max_tokens": max_output_tokens,
+    }
+    resp = requests.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=45)
     resp.raise_for_status()
     data = resp.json()
-    candidates = data.get("candidates", [])
-    if candidates:
-        parts = candidates[0].get("content", {}).get("parts", [])
-        if parts:
-            return parts[0].get("text", "")
-    raise ValueError("No text returned from Gemini API")
+    choices = data.get("choices", [])
+    if choices:
+        return choices[0].get("message", {}).get("content", "")
+    raise ValueError("No text returned from OpenRouter API")
 
 
 def call_with_retry(func, *args, max_retries=3, **kwargs):
@@ -292,10 +288,10 @@ Security Recommendations
 Use only plain text. No asterisks, no hash symbols. Use dashes for bullet points.
 """
     try:
-        text = call_with_retry(call_gemini_api, prompt, max_output_tokens=1200, temperature=0.2)
+        text = call_with_retry(call_openrouter_api, prompt, max_output_tokens=1200, temperature=0.2)
         return text.replace("*", "").replace("#", "")
     except Exception as exc:
-        logger.error("Gemini summary failed: %s", exc)
+        logger.error("OpenRouter summary failed: %s", exc)
         if is_trusted:
             return (
                 f"Summary\n{domain} belongs to a trusted institutional TLD "

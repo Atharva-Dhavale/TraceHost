@@ -19,7 +19,7 @@ TraceHost is a monorepo: a **Next.js** frontend for exploring domain analysis re
 - 🔍 **Domain Analysis** — WHOIS, DNS resolution, and IP geolocation lookups for a target domain
 - 🧮 **Risk Scoring Engine** (`Backend/checker/risk_engine.py`) — computes an advanced composite risk score from multiple signals
 - 🦠 **Threat Intelligence** (`Backend/checker/threat_intel.py`) — Shodan exposed-service data and SecurityTrails history combined into a threat summary
-- 🤖 **AI Risk Summaries** — Google Gemini generates a human-readable summary of scan findings
+- 🤖 **AI Risk Summaries** — OpenRouter (default model `openai/gpt-oss-120b:free`) generates a human-readable summary of scan findings
 - 🌎 **Geolocation Visualization** — server locations plotted via the Google Maps API
 - 🗃️ **Persistent Scan History** — every scan, flagged domain, and dashboard stat is stored in MongoDB
 - 🚩 **Suspicious Domain Tracking** — list, flag, and review domains marked as suspicious
@@ -72,7 +72,7 @@ TraceHost/
 - 📦 **Node.js** 18.x or higher and **npm**
 - 🐍 **Python** 3.10+ and `pip`
 - 🍃 A **MongoDB Atlas** connection string (or any MongoDB instance)
-- API keys for: **ipinfo.io**, **Shodan**, **SecurityTrails**, and **Google Gemini** (see [Environment Configuration](#️-environment-configuration))
+- API keys for: **ipinfo.io**, **Shodan**, **SecurityTrails**, and **OpenRouter** (see [Environment Configuration](#️-environment-configuration))
 
 ### 🔧 Quick start (both servers)
 
@@ -98,7 +98,7 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 cp ../.env.example .env         # then fill in MONGO_URI, IPINFO_API_KEY, SHODAN_API_KEY,
-                                 # SECURITY_TRAILS_API_KEY, GEMINI_API_KEY
+                                 # SECURITY_TRAILS_API_KEY, OPENROUTER_API_KEY
 
 python3 manage.py migrate
 python3 manage.py runserver     # http://localhost:8000
@@ -150,7 +150,8 @@ Environment variables are split across two files — see `.env.example` at the r
 | `IPINFO_API_KEY` | [ipinfo.io](https://ipinfo.io/) key for IP geolocation |
 | `SHODAN_API_KEY` | [Shodan](https://www.shodan.io/) key for exposed-service/port data |
 | `SECURITY_TRAILS_API_KEY` | [SecurityTrails](https://securitytrails.com/) key for DNS/subdomain history |
-| `GEMINI_API_KEY` | Google Gemini key used to generate the AI risk summary |
+| `OPENROUTER_API_KEY` | [OpenRouter](https://openrouter.ai/) key used to generate the AI risk summary |
+| `OPENROUTER_MODEL` | OpenRouter model id to use (default: `openai/gpt-oss-120b:free`) |
 
 ## 🌐 API Endpoints
 
@@ -173,7 +174,7 @@ All endpoints are served under `Backend`'s `/api/` prefix (e.g. `http://localhos
 - **ipinfo.io** — IP geolocation for mapping server locations
 - **Shodan** — exposed services, open ports, banner data
 - **SecurityTrails** — historical DNS and subdomain data
-- **Google Gemini** — AI-generated natural-language risk summaries
+- **OpenRouter** — AI-generated natural-language risk summaries (configurable model, defaults to `openai/gpt-oss-120b:free`)
 - **MongoDB Atlas** — persistent storage for scans, dashboard stats, and flagged domains
 
 ## 🔐 Security Best Practices
