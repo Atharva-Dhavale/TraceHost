@@ -320,9 +320,13 @@ def calculate_advanced_risk_score(
         reg_score += 6
         reg_factors.append("Registrar information missing (+6)")
 
-    if not whois_info.get("registrant_organization") and not whois_info.get("registrant_name"):
-        reg_score += 4
-        reg_factors.append("Registrant identity hidden (privacy protection active) (+4)")
+    if not whois_info.get("registrant_organization"):
+        reg_score += 3
+        reg_factors.append("Registrant organization not disclosed (+3)")
+
+    if not whois_info.get("registrant_name"):
+        reg_score += 5
+        reg_factors.append("Registrant name not disclosed (+5)")
 
     # Short registration window (attackers often register for 1 year max)
     exp_dt = _parse_date(whois_info.get("expiration_date"))
@@ -379,6 +383,12 @@ def calculate_advanced_risk_score(
             pts = 3
             infra_score += pts
             infra_factors.append(f"Large attack surface: {len(ports)} open ports (+{pts})")
+    elif isinstance(shodan_info, dict) and shodan_info.get("error"):
+        pts = 4
+        infra_score += pts
+        infra_factors.append(
+            "Network exposure could not be verified — Shodan scan blocked or unavailable (+4)"
+        )
 
     cat3 = min(25, infra_score)
 

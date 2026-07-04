@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/components/ui/use-toast";
-import { analyzeDomain, flagDomain, DomainAnalysisResponse } from "@/lib/api";
+import { analyzeDomain, flagDomain, DomainAnalysisResponse, RiskBreakdownCategory } from "@/lib/api";
 import RiskBreakdown from "@/components/analyze/risk-breakdown";
 import { ArrowUpRight, AlertTriangle, Calendar, Globe, Server, Shield, Database, Download, Flag, MapPin, CheckCircle2, Info, BookText, Cpu, Lock, User, Activity, Wifi } from "lucide-react";
 import { GoogleMap } from "@/components/analyze/google-map";
@@ -175,7 +175,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
           doc.setTextColor(99, 102, 241);
           doc.text('Risk Score Analysis', 20, 50);
 
-          const riskScore = data.Security_Analysis?.risk_score || 0;
+          const riskScore = data.Security_Analysis?.risk_score ?? 0;
           const riskLevel = getRiskLevel(riskScore);
           const riskColor =
             riskScore >= 70 ? [239, 68, 68] : // red
@@ -257,6 +257,65 @@ export function DomainResults({ domain }: DomainResultsProps) {
             doc.setTextColor(0, 0, 0);
             doc.text(`${i + 1}. ${securityIssues[i]}`, 25, yPos);
             yPos += 7;
+          }
+
+          // Add ThreatVector risk breakdown so the export matches the on-screen
+          // Risk Analysis tab instead of only the flattened factor list above.
+          if (data.Risk_Breakdown) {
+            if (yPos > 250) {
+              doc.addPage();
+              yPos = 20;
+            }
+            yPos += 5;
+            doc.setFontSize(16);
+            doc.setTextColor(99, 102, 241);
+            doc.text('ThreatVector Risk Breakdown', 20, yPos);
+            yPos += 8;
+
+            doc.setFontSize(11);
+            doc.setTextColor(0, 0, 0);
+            const categories: [keyof typeof data.Risk_Breakdown, string][] = [
+              ['domain_name', 'Domain Name Analysis'],
+              ['registration', 'Registration Intelligence'],
+              ['infrastructure', 'Infrastructure Profiling'],
+              ['dns_analysis', 'DNS Pattern Analysis'],
+            ];
+            for (const [key, label] of categories) {
+              const cat = data.Risk_Breakdown[key] as RiskBreakdownCategory | undefined;
+              if (!cat) continue;
+              if (yPos > 270) {
+                doc.addPage();
+                yPos = 20;
+              }
+              doc.text(`${label}: ${cat.score}/${cat.max}`, 25, yPos);
+              yPos += 6;
+            }
+
+            if (data.Risk_Breakdown.phishing) {
+              if (yPos > 265) {
+                doc.addPage();
+                yPos = 20;
+              }
+              doc.setTextColor(220, 38, 38);
+              doc.text(
+                `BrandShield Alert: resembles '${data.Risk_Breakdown.phishing.brand}' (${data.Risk_Breakdown.phishing.similarity}% similarity)`,
+                25,
+                yPos
+              );
+              doc.setTextColor(0, 0, 0);
+              yPos += 7;
+            }
+
+            if (data.Threat_Intel?.feeds?.urlhaus?.listed) {
+              if (yPos > 265) {
+                doc.addPage();
+                yPos = 20;
+              }
+              doc.setTextColor(234, 88, 12);
+              doc.text('IntelFeed Alert: Listed on URLhaus threat intelligence database', 25, yPos);
+              doc.setTextColor(0, 0, 0);
+              yPos += 7;
+            }
           }
 
           // Add AI analysis on a new page if available
@@ -385,7 +444,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
     );
   }
 
-  const riskScore = data.Security_Analysis?.risk_score || 50;
+  const riskScore = data.Security_Analysis?.risk_score ?? 0;
   const registrarInfo = {
     name: data.Registrar || "Unknown",
     registrantName: data.Registrant_Name || "Unknown",
@@ -1427,9 +1486,20 @@ const generateCsv = (data: DomainAnalysisResponse, domain: string): string => {
     [''],
 
     ['Risk Assessment'],
-    ['Risk Score', `${data.Security_Analysis?.risk_score || 'N/A'}/100`],
-    ['Risk Level', getRiskLevel(data.Security_Analysis?.risk_score || 0)],
+    ['Risk Score', `${data.Security_Analysis?.risk_score ?? 'N/A'}/100`],
+    ['Risk Level', getRiskLevel(data.Security_Analysis?.risk_score ?? 0)],
     ['Is Suspicious', data.Security_Analysis?.is_suspicious ? 'Yes' : 'No'],
+    [''],
+
+    ['ThreatVector Risk Breakdown'],
+    ['Domain Name Analysis', `${data.Risk_Breakdown?.domain_name?.score ?? 'N/A'}/${data.Risk_Breakdown?.domain_name?.max ?? 30}`],
+    ['Registration Intelligence', `${data.Risk_Breakdown?.registration?.score ?? 'N/A'}/${data.Risk_Breakdown?.registration?.max ?? 25}`],
+    ['Infrastructure Profiling', `${data.Risk_Breakdown?.infrastructure?.score ?? 'N/A'}/${data.Risk_Breakdown?.infrastructure?.max ?? 25}`],
+    ['DNS Pattern Analysis', `${data.Risk_Breakdown?.dns_analysis?.score ?? 'N/A'}/${data.Risk_Breakdown?.dns_analysis?.max ?? 20}`],
+    ['BrandShield Phishing Match', data.Risk_Breakdown?.phishing
+      ? `${data.Risk_Breakdown.phishing.brand} (${data.Risk_Breakdown.phishing.similarity}% similarity)`
+      : 'None detected'],
+    ['URLhaus Threat Feed', data.Threat_Intel?.feeds?.urlhaus?.listed ? 'Listed' : 'Not listed'],
     [''],
 
     ['Server Information'],
