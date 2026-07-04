@@ -14,7 +14,7 @@ import re
 from datetime import timedelta, datetime
 from decouple import config
 
-from .risk_engine import calculate_advanced_risk_score
+from .risk_engine import calculate_advanced_risk_score, is_trusted_institutional
 from .threat_intel import get_threat_summary
 from . import mongo_store
 
@@ -205,8 +205,7 @@ def get_asn_info(ip):
 
 def generate_domain_summary(domain_data: dict) -> str:
     domain = domain_data.get("Domain", "N/A")
-    trusted_tlds = [".edu", ".gov", ".ac", ".sch", ".mil", ".int"]
-    is_trusted = any(domain.lower().endswith(t) for t in trusted_tlds)
+    is_trusted = is_trusted_institutional(domain)
 
     if not domain_data.get("Domain_Exists", True):
         return "Domain does not exist — not registered or cannot be resolved."

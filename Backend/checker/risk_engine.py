@@ -2,6 +2,15 @@
 TraceHost ThreatVector Engine
 Multi-factor domain risk scoring with entropy analysis, brand impersonation
 detection, infrastructure profiling, and registration intelligence.
+
+Scoring model (0-100 total):
+  domain_name     0-30   lexical / impersonation signals
+  registration    0-25   WHOIS age, registrar, registrant transparency
+  infrastructure  0-25   hosting geography, ASN reputation, network exposure
+  dns_analysis    0-20   resolution patterns (fast-flux, failures)
+
+All scoring is deterministic: identical inputs always produce identical
+scores, and every point awarded is explained by a factor string.
 """
 
 import math
@@ -11,6 +20,15 @@ from datetime import datetime, timezone as _tz
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Public-suffix-aware domain splitting. tldextract ships an offline snapshot
+# of the Public Suffix List; suffix_list_urls=() pins it to that snapshot so
+# results are deterministic and no network call is ever made.
+try:
+    import tldextract as _tldextract
+    _extract = _tldextract.TLDExtract(suffix_list_urls=())
+except Exception:  # pragma: no cover — tldextract is a required dependency
+    _extract = None
 
 # ── Threat Intelligence Data ──────────────────────────────────────────────────
 
@@ -33,7 +51,8 @@ PHISHING_KEYWORDS = [
     "suspended", "unusual", "activity", "limited", "unlock", "validate",
 ]
 
-# Risk points per TLD (higher = riskier)
+# Risk points per TLD (higher = riskier). Keys include the leading dot and are
+# matched exactly against the domain's public suffix.
 HIGH_RISK_TLDS = {
     ".tk": 9, ".ml": 9, ".ga": 9, ".cf": 9, ".gq": 9,
     ".xyz": 6, ".top": 6, ".click": 7, ".loan": 8, ".work": 5,
@@ -44,7 +63,13 @@ HIGH_RISK_TLDS = {
     ".cricket": 7, ".party": 6, ".science": 5, ".webcam": 7,
 }
 
-TRUSTED_TLDS = [".edu", ".gov", ".ac", ".sch", ".mil", ".int"]
+# Institutional suffixes that carry a low-risk baseline. Top-level .edu/.gov/
+# .mil/.int are registry-restricted. Bare ".ac"/".sch" are NOT trusted: .ac is
+# the openly registrable Ascension Island ccTLD — trusting it would let
+# "paypal-login.ac" bypass every check. Institutional second-level suffixes
+# under a ccTLD (ac.uk, gov.in, edu.au, ...) are trusted via regex.
+TRUSTED_TLDS = {"edu", "gov", "mil", "int"}
+_TRUSTED_CC_SUFFIX_RE = re.compile(r"^(ac|edu|gov|sch|mil)\.[a-z]{2}$")
 
 # Ports that indicate malicious or highly exposed infrastructure
 HIGH_RISK_PORTS = {
@@ -60,14 +85,15 @@ HIGH_RISK_PORTS = {
     2222: 5,   # Non-standard SSH
 }
 
-# Known bulletproof hosting ASN prefixes
-BULLETPROOF_ASNS = [
+# Known bulletproof hosting ASNs (exact AS-number match)
+BULLETPROOF_ASNS = {
     "AS40676", "AS29073", "AS60404", "AS202425", "AS206898",
     "AS9002", "AS48282", "AS197414", "AS47142", "AS35624",
     "AS209588", "AS59711", "AS31034", "AS62282",
-]
+}
+_ASN_TOKEN_RE = re.compile(r"AS(\d+)")
 
-# Country risk weights (elevated — not definitive)
+# Country risk weights keyed by ISO-3166 alpha-2 code (elevated — not definitive)
 HIGH_RISK_COUNTRIES = {
     "KP": 10,  # North Korea — state-sponsored threats
     "IR": 8,   # Iran
@@ -83,6 +109,31 @@ HIGH_RISK_COUNTRIES = {
 
 
 # ── Core Algorithms ───────────────────────────────────────────────────────────
+
+def split_domain(domain: str) -> tuple[str, str, str]:
+    """
+    Split a domain into (subdomain, registrable_label, public_suffix) using
+    the Public Suffix List, so "example.co.uk" yields ("", "example", "co.uk")
+    rather than misreading "co" as the registered name.
+    """
+    d = domain.lower().strip().rstrip(".")
+    if _extract is not None:
+        ext = _extract(d)
+        if ext.suffix:
+            return ext.subdomain, ext.domain, ext.suffix
+    # Fallback: naive split (unknown TLD or extractor unavailable)
+    parts = d.split(".")
+    if len(parts) >= 2:
+        return ".".join(parts[:-2]), parts[-2], parts[-1]
+    return "", d, ""
+
+
+def is_trusted_institutional(domain: str) -> bool:
+    """True for registry-restricted institutional domains (.edu/.gov/.mil/.int
+    and cc second-level equivalents such as ac.uk / gov.in / edu.au)."""
+    _, _, suffix = split_domain(domain)
+    return suffix in TRUSTED_TLDS or bool(_TRUSTED_CC_SUFFIX_RE.match(suffix))
+
 
 def calculate_entropy(text: str) -> float:
     """Shannon entropy — high value suggests algorithmically generated domain."""
@@ -110,27 +161,43 @@ def levenshtein_distance(s1: str, s2: str) -> int:
     return prev[-1]
 
 
+def _has_impersonation_evidence(sld: str, brand: str) -> bool:
+    """
+    For an embedded-brand match, require corroborating evidence before calling
+    it impersonation, so ordinary words that merely contain a brand
+    ("steamship" ⊃ "steam", "applesauce" ⊃ "apple") are not flagged.
+    Evidence = separator or digit adjacent to the brand, or a phishing keyword
+    in the surrounding text.
+    """
+    idx = sld.find(brand)
+    if idx < 0:
+        return False
+    before = sld[idx - 1] if idx > 0 else ""
+    after = sld[idx + len(brand)] if idx + len(brand) < len(sld) else ""
+    if (before and before in "-_0123456789") or (after and after in "-_0123456789"):
+        return True
+    residue = sld[:idx] + " " + sld[idx + len(brand):]
+    return any(kw in residue for kw in PHISHING_KEYWORDS)
+
+
 def find_brand_similarity(domain: str):
     """
     Return brand impersonation details if the domain closely resembles
     a popular brand, or None if no match.
-    Detects both close-spelling variants and embedded brand names.
+    Detects close-spelling variants, embedded brand names, and brands hidden
+    behind phishing pre/suffixes ("my-ebay", "secure-paypal-login").
     """
-    parts = domain.lower().split(".")
-    sld = parts[-2] if len(parts) >= 2 else domain.lower()
+    _, sld, _ = split_domain(domain)
 
-    # 1. Exact SLD == brand → legitimate, skip
-    for brand in POPULAR_BRANDS:
-        if sld == brand:
-            return None
+    # 1. Exact registrable label == brand → legitimate, skip
+    if sld in POPULAR_BRANDS:
+        return None
 
-    # 2. Brand name embedded in SLD (e.g., "microsoft-verify", "secure-paypal-login")
-    #    Only flag if the sld is longer than the brand (otherwise it IS the brand)
+    # 2. Brand name embedded in the label, with corroborating evidence
     for brand in POPULAR_BRANDS:
         if len(brand) < 5:
             continue
-        if brand in sld and len(sld) > len(brand):
-            # Calculate how much of the sld the brand occupies
+        if brand in sld and len(sld) > len(brand) and _has_impersonation_evidence(sld, brand):
             coverage = round(len(brand) / len(sld) * 100)
             return {
                 "brand": brand,
@@ -138,7 +205,7 @@ def find_brand_similarity(domain: str):
                 "similarity": max(75, coverage),
             }
 
-    # 3. Typosquat: strip common phishing pre/suffixes and check edit distance
+    # 3. Strip common phishing pre/suffixes, then compare against brands
     stripped = sld
     for prefix in ["secure-", "login-", "account-", "my-", "www-", "mail-", "verify-", "signin-"]:
         if stripped.startswith(prefix):
@@ -150,10 +217,15 @@ def find_brand_similarity(domain: str):
     best: dict | None = None
     best_dist = float("inf")
     for brand in POPULAR_BRANDS:
-        if len(stripped) < 3 or len(brand) < 3:
+        # Stripping revealed the exact brand ("my-ebay" → "ebay"): definite
+        # impersonation, since the label itself is not the brand (checked in 1).
+        if stripped == brand and stripped != sld:
+            return {"brand": brand, "distance": 0, "similarity": 100}
+
+        # Typosquat detection. Minimum length 5 keeps short dictionary words
+        # ("case" vs "chase") from producing false phishing alarms.
+        if len(stripped) < 5 or len(brand) < 5 or stripped == brand:
             continue
-        if stripped == brand:
-            return None
         dist = levenshtein_distance(stripped, brand)
         ratio = dist / max(len(stripped), len(brand))
         if (dist <= 2 or ratio <= 0.25) and dist < best_dist:
@@ -167,24 +239,34 @@ def find_brand_similarity(domain: str):
 
 
 def check_homograph_attack(domain: str) -> bool:
-    """Detect IDN homograph attacks (non-ASCII Unicode characters)."""
+    """Detect IDN homograph attacks — raw Unicode or its punycode encoding."""
     try:
         domain.encode("ascii")
-        return False
     except UnicodeEncodeError:
         return True
+    return any(label.startswith("xn--") for label in domain.lower().split("."))
 
 
 def _parse_date(val) -> datetime | None:
-    """Safely parse a date from string or datetime."""
+    """Safely parse a date from datetime, list, or common WHOIS string forms."""
     if val is None:
         return None
+    if isinstance(val, list):
+        val = val[0] if val else None
+        if val is None:
+            return None
     if isinstance(val, datetime):
         return val
     if isinstance(val, str):
-        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d"):
+        s = val.strip()
+        # ISO 8601 (handles microseconds, offsets, 'Z', space separator)
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%d-%m-%Y", "%d.%m.%Y", "%Y.%m.%d."):
             try:
-                return datetime.strptime(val.split("+")[0].split("Z")[0], fmt)
+                return datetime.strptime(s, fmt)
             except ValueError:
                 continue
     return None
@@ -207,11 +289,13 @@ def calculate_advanced_risk_score(
     (score: int, breakdown: dict)
         breakdown contains per-category scores, factor lists, and auxiliary data.
     """
-    domain_lower = domain.lower()
-    entropy = 0.0
+    domain_lower = domain.lower().strip().rstrip(".")
+    subdomain, sld, suffix = split_domain(domain_lower)
+    whois_info = whois_info or {}
+    asn_info = asn_info or {}
 
-    # ── Trusted TLD fast path ─────────────────────────────────────────────────
-    if any(domain_lower.endswith(tld) for tld in TRUSTED_TLDS):
+    # ── Trusted institutional suffix fast path ────────────────────────────────
+    if is_trusted_institutional(domain_lower):
         return 8, {
             "domain_name":   {"score": 0, "max": 30, "factors": []},
             "registration":  {"score": 0, "max": 25, "factors": []},
@@ -219,19 +303,18 @@ def calculate_advanced_risk_score(
             "dns_analysis":  {"score": 0, "max": 20, "factors": []},
             "total": 8,
             "entropy": 0.0,
-            "override": "Trusted institutional TLD (.edu/.gov/.mil) — low risk baseline",
+            "override": "Registry-restricted institutional suffix (.edu/.gov/.mil/.int) — low risk baseline",
         }
 
     # ── CATEGORY 1: Domain Name Analysis (0–30) ───────────────────────────────
     name_score = 0
     name_factors: list[str] = []
 
-    sld = domain_lower.split(".")[-2] if "." in domain_lower else domain_lower
     entropy = calculate_entropy(sld)
 
     # 1a. Shannon entropy — DGA domain generation detection
     if entropy > 3.5:
-        pts = min(10, int((entropy - 3.5) * 6))
+        pts = min(10, max(1, round((entropy - 3.5) * 6)))
         name_score += pts
         name_factors.append(
             f"High entropy ({entropy:.2f} bits) — likely algorithmically generated (+{pts})"
@@ -247,8 +330,27 @@ def calculate_advanced_risk_score(
             f"({brand_match['similarity']}% similarity, edit dist {brand_match['distance']}) (+{pts})"
         )
 
-    # 1c. Phishing keywords in domain string
-    found_kw = [kw for kw in PHISHING_KEYWORDS if kw in domain_lower]
+    # 1c. Phishing keywords in the host labels (never the public suffix, which
+    # is scored separately as TLD risk). A keyword counts when it appears as a
+    # separated token, at a label boundary, or adjacent to a digit — interior
+    # coincidences ("login" inside "blogindex") are ignored.
+    host_labels = [l for l in (subdomain.split(".") if subdomain else []) if l] + [sld]
+    found_kw: list[str] = []
+    for kw in PHISHING_KEYWORDS:
+        for label in host_labels:
+            if kw not in label:
+                continue
+            tokens = re.split(r"[-_]", label)
+            idx = label.find(kw)
+            before = label[idx - 1] if idx > 0 else ""
+            after = label[idx + len(kw)] if idx + len(kw) < len(label) else ""
+            if (
+                kw in tokens
+                or label.startswith(kw) or label.endswith(kw)
+                or before.isdigit() or after.isdigit()
+            ):
+                found_kw.append(kw)
+                break
     if found_kw:
         pts = min(10, len(found_kw) * 4)
         name_score += pts
@@ -256,12 +358,11 @@ def calculate_advanced_risk_score(
             f"Phishing keywords detected: {', '.join(found_kw[:4])} (+{pts})"
         )
 
-    # 1d. High-risk TLD
-    for tld, pts in HIGH_RISK_TLDS.items():
-        if domain_lower.endswith(tld):
-            name_score += pts
-            name_factors.append(f"High-risk TLD '{tld}' used (+{pts})")
-            break
+    # 1d. High-risk TLD (exact public-suffix match)
+    tld_pts = HIGH_RISK_TLDS.get(f".{suffix}")
+    if tld_pts:
+        name_score += tld_pts
+        name_factors.append(f"High-risk TLD '.{suffix}' used (+{tld_pts})")
 
     # 1e. Excessive hyphens (common in spoofed domains)
     hyphen_count = sld.count("-")
@@ -270,8 +371,8 @@ def calculate_advanced_risk_score(
         name_score += pts
         name_factors.append(f"{hyphen_count} hyphens in second-level domain (+{pts})")
 
-    # 1f. IDN homograph attack
-    if check_homograph_attack(domain):
+    # 1f. IDN homograph attack (Unicode or punycode form)
+    if check_homograph_attack(domain_lower):
         name_score += 15
         name_factors.append("Unicode IDN homograph attack detected (+15)")
 
@@ -291,53 +392,64 @@ def calculate_advanced_risk_score(
     reg_score = 0
     reg_factors: list[str] = []
 
-    creation_dt = _parse_date(whois_info.get("creation_date"))
-    if creation_dt:
-        if creation_dt.tzinfo is None:
-            creation_dt = creation_dt.replace(tzinfo=_tz.utc)
-        age_days = (datetime.now(_tz.utc) - creation_dt).days
-
-        if age_days < 30:
-            pts = 20
-            reg_factors.append(f"Domain is only {age_days} days old — extremely new (+{pts})")
-        elif age_days < 90:
-            pts = 14
-            reg_factors.append(f"Domain is {age_days} days old — very new (+{pts})")
-        elif age_days < 180:
-            pts = 8
-            reg_factors.append(f"Domain is {age_days} days old — new (+{pts})")
-        elif age_days < 365:
-            pts = 4
-            reg_factors.append(f"Domain is {age_days} days old — less than 1 year (+{pts})")
-        else:
-            pts = 0
-        reg_score += pts
-    else:
+    if whois_info.get("error") or not whois_info:
+        # The lookup itself failed. Unknown is not the same as concealed:
+        # a single uncertainty factor instead of stacking every "missing
+        # field" penalty against a domain we simply could not query.
         reg_score += 8
-        reg_factors.append("Registration date unavailable — possible WHOIS shield (+8)")
+        reg_factors.append("WHOIS lookup failed — registration data unavailable (+8)")
+    else:
+        creation_dt = _parse_date(whois_info.get("creation_date"))
+        if creation_dt:
+            if creation_dt.tzinfo is None:
+                creation_dt = creation_dt.replace(tzinfo=_tz.utc)
+            age_days = (datetime.now(_tz.utc) - creation_dt).days
 
-    if not whois_info.get("registrar"):
-        reg_score += 6
-        reg_factors.append("Registrar information missing (+6)")
-
-    if not whois_info.get("registrant_organization"):
-        reg_score += 3
-        reg_factors.append("Registrant organization not disclosed (+3)")
-
-    if not whois_info.get("registrant_name"):
-        reg_score += 5
-        reg_factors.append("Registrant name not disclosed (+5)")
-
-    # Short registration window (attackers often register for 1 year max)
-    exp_dt = _parse_date(whois_info.get("expiration_date"))
-    if exp_dt and creation_dt:
-        if exp_dt.tzinfo is None:
-            exp_dt = exp_dt.replace(tzinfo=_tz.utc)
-        reg_days = (exp_dt - creation_dt).days
-        if 0 < reg_days <= 365:
-            pts = 3
+            if age_days < 0:
+                pts = 20
+                reg_factors.append("Registration date is in the future — invalid WHOIS data (+20)")
+            elif age_days < 30:
+                pts = 20
+                reg_factors.append(f"Domain is only {age_days} days old — extremely new (+{pts})")
+            elif age_days < 90:
+                pts = 14
+                reg_factors.append(f"Domain is {age_days} days old — very new (+{pts})")
+            elif age_days < 180:
+                pts = 8
+                reg_factors.append(f"Domain is {age_days} days old — new (+{pts})")
+            elif age_days < 365:
+                pts = 4
+                reg_factors.append(f"Domain is {age_days} days old — less than 1 year (+{pts})")
+            else:
+                pts = 0
             reg_score += pts
-            reg_factors.append(f"Short registration window ({reg_days} days) (+{pts})")
+        else:
+            reg_score += 8
+            reg_factors.append("Registration date unavailable — possible WHOIS shield (+8)")
+
+        if not whois_info.get("registrar"):
+            reg_score += 6
+            reg_factors.append("Registrar information missing (+6)")
+
+        # Post-GDPR, registrant NAME redaction is near-universal (weak signal);
+        # a missing ORGANIZATION is the stronger transparency indicator.
+        if not whois_info.get("registrant_organization"):
+            reg_score += 3
+            reg_factors.append("Registrant organization not disclosed (+3)")
+        if not whois_info.get("registrant_name"):
+            reg_score += 2
+            reg_factors.append("Registrant name not disclosed (+2)")
+
+        # Short registration window (attackers often register for 1 year max)
+        exp_dt = _parse_date(whois_info.get("expiration_date"))
+        if exp_dt and creation_dt:
+            if exp_dt.tzinfo is None:
+                exp_dt = exp_dt.replace(tzinfo=_tz.utc)
+            reg_days = (exp_dt - creation_dt).days
+            if 0 < reg_days <= 365:
+                pts = 3
+                reg_score += pts
+                reg_factors.append(f"Short registration window ({reg_days} days) (+{pts})")
 
     cat2 = min(25, reg_score)
 
@@ -345,24 +457,29 @@ def calculate_advanced_risk_score(
     infra_score = 0
     infra_factors: list[str] = []
 
-    country_code = asn_info.get("country", "")
-    if country_code in HIGH_RISK_COUNTRIES:
-        pts = HIGH_RISK_COUNTRIES[country_code]
+    # Geography — compare ISO country codes, never display names
+    cc = (asn_info.get("country_code") or "").strip().upper()
+    country_name = (asn_info.get("country") or "").strip()
+    if not cc and len(country_name) == 2 and country_name.isalpha():
+        cc = country_name.upper()  # tolerate feeds that put the code in "country"
+    if cc in HIGH_RISK_COUNTRIES:
+        pts = HIGH_RISK_COUNTRIES[cc]
         infra_score += pts
-        infra_factors.append(f"Hosted in elevated-risk region: {country_code} (+{pts})")
-    elif not country_code or country_code in ("Unknown", ""):
+        infra_factors.append(f"Hosted in elevated-risk region: {cc} (+{pts})")
+    elif not cc and country_name in ("", "Unknown"):
         infra_score += 5
         infra_factors.append("Hosting location unknown (+5)")
 
-    # Bulletproof hosting ASN check
-    asn_str = asn_info.get("asn", "")
-    for bad_asn in BULLETPROOF_ASNS:
-        if bad_asn in asn_str.upper():
-            infra_score += 12
-            infra_factors.append(f"Known bulletproof hosting provider ({bad_asn}) (+12)")
-            break
+    # Bulletproof hosting ASN check (exact AS-number match, no substrings)
+    asn_str = (asn_info.get("asn") or "").upper()
+    asn_tokens = {f"AS{num}" for num in _ASN_TOKEN_RE.findall(asn_str)}
+    hit = asn_tokens & BULLETPROOF_ASNS
+    if hit:
+        bad_asn = sorted(hit)[0]
+        infra_score += 12
+        infra_factors.append(f"Known bulletproof hosting provider ({bad_asn}) (+12)")
 
-    if isinstance(shodan_info, dict) and not shodan_info.get("error"):
+    if isinstance(shodan_info, dict) and shodan_info and not shodan_info.get("error"):
         ports = shodan_info.get("ports", [])
         # Dangerous port exposure
         dangerous_found = [p for p in ports if p in HIGH_RISK_PORTS]
@@ -397,9 +514,11 @@ def calculate_advanced_risk_score(
     dns_factors: list[str] = []
 
     if isinstance(dns_info, list):
-        # Fast flux: many A records cycling rapidly is a classic C2 indicator
-        if len(dns_info) > 4:
-            pts = min(10, (len(dns_info) - 4) * 2 + 4)
+        # Fast flux: an unusually large rotating A-record set is a classic C2
+        # indicator. Threshold at >8 records: mainstream CDNs commonly return
+        # 4-8 addresses, so the old >4 cutoff flagged ordinary AWS/Akamai sites.
+        if len(dns_info) > 8:
+            pts = min(10, (len(dns_info) - 8) * 2 + 4)
             dns_score += pts
             dns_factors.append(
                 f"{len(dns_info)} A records detected — possible fast-flux network (+{pts})"
@@ -407,6 +526,9 @@ def calculate_advanced_risk_score(
         elif len(dns_info) == 0:
             dns_score += 3
             dns_factors.append("No DNS A records resolved (+3)")
+    elif isinstance(dns_info, dict) and dns_info.get("error"):
+        dns_score += 3
+        dns_factors.append("DNS resolution failed during scan (+3)")
 
     cat4 = min(20, dns_score)
 

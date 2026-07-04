@@ -1,39 +1,59 @@
 """
 TraceHost Threat Intelligence Module
-Real-time checks against public threat feeds — no API key required.
+Real-time checks against public threat feeds.
+
+Note: abuse.ch now requires a (free) Auth-Key for API queries. Set
+URLHAUS_AUTH_KEY in Backend/.env to enable live URLhaus lookups; without it
+the feed reports listed=None ("unknown") rather than a false "clean".
 """
 
 import logging
 import requests
+from decouple import config
 
 logger = logging.getLogger(__name__)
 
 URLHAUS_API = "https://urlhaus-api.abuse.ch/v1/host/"
+URLHAUS_AUTH_KEY = config("URLHAUS_AUTH_KEY", default="")
 REQUEST_TIMEOUT = 6
 
 
 def check_urlhaus(domain: str) -> dict:
     """
     Query URLhaus (abuse.ch) for the domain.
-    Returns a dict with 'listed' bool and optional details.
+    Returns a dict with 'listed' bool (None when the feed can't be queried)
+    and optional details.
     """
     try:
-        resp = requests.post(URLHAUS_API, data={"host": domain}, timeout=REQUEST_TIMEOUT)
+        headers = {"Auth-Key": URLHAUS_AUTH_KEY} if URLHAUS_AUTH_KEY else {}
+        resp = requests.post(
+            URLHAUS_API, data={"host": domain}, headers=headers, timeout=REQUEST_TIMEOUT
+        )
+        if resp.status_code in (401, 403):
+            return {
+                "listed": None,
+                "source": "URLhaus",
+                "error": "URLhaus API requires an Auth-Key (set URLHAUS_AUTH_KEY in Backend/.env)",
+            }
         if resp.status_code == 200:
             data = resp.json()
             status = data.get("query_status", "")
-            if status == "is_host":
-                urls = data.get("urls", [])
+            # "ok" is the documented success status; "is_host" kept for
+            # compatibility with older API responses.
+            if status in ("ok", "is_host"):
+                urls = data.get("urls", []) or []
                 active = [u for u in urls if u.get("url_status") == "online"]
                 return {
-                    "listed": True,
+                    "listed": len(urls) > 0,
                     "urls_count": len(urls),
                     "active_urls": len(active),
-                    "tags": list({tag for u in urls for tag in (u.get("tags") or [])}),
+                    "tags": sorted({tag for u in urls for tag in (u.get("tags") or [])}),
                     "blacklists": data.get("blacklists", {}),
                     "source": "URLhaus",
                 }
-            return {"listed": False, "source": "URLhaus"}
+            if status == "no_results":
+                return {"listed": False, "source": "URLhaus"}
+            return {"listed": None, "source": "URLhaus", "error": f"query_status: {status or 'missing'}"}
         return {"listed": None, "source": "URLhaus", "error": f"HTTP {resp.status_code}"}
     except requests.Timeout:
         logger.warning("URLhaus check timed out for %s", domain)
