@@ -13,11 +13,11 @@ import RiskBreakdown from "@/components/analyze/risk-breakdown";
 import { ArrowUpRight, AlertTriangle, Calendar, Globe, Server, Shield, Database, Download, Flag, MapPin, CheckCircle2, Info, BookText, Cpu, Lock, User, Activity, Wifi } from "lucide-react";
 import { GoogleMap } from "@/components/analyze/google-map";
 import { AnimatePresence, motion } from "framer-motion";
-import { Skeleton } from "@/components/ui/skeleton";
 import { useMediaQuery } from "@/lib/hooks/use-media-query";
 import MapComponent from "./map-component";
 import DnsInfo from "./dns-info";
 import SubdomainsList from "./subdomains-list";
+import { DomainAnalysisLoader } from "./domain-analysis-loader";
 
 // Remove dynamic imports that are causing issues
 // We'll import jsPDF directly in the function that needs it
@@ -69,6 +69,13 @@ export function DomainResults({ domain }: DomainResultsProps) {
 
         // Break up the request and processing into smaller chunks
         const result = await analyzeDomain(domain);
+
+        // The backend can respond 200 with an embedded error payload for
+        // some failure paths — treat that the same as a rejected request
+        // so we never render a partial/broken result as if it succeeded.
+        if ((result as any)?.error) {
+          throw new Error((result as any).error);
+        }
 
         // Defer state updates to prevent UI freezing
         window.requestAnimationFrame(() => {
@@ -362,7 +369,7 @@ export function DomainResults({ domain }: DomainResultsProps) {
   };
 
   if (isLoading) {
-    return <DomainResultsSkeleton />;
+    return <DomainAnalysisLoader domain={domain} />;
   }
 
   if (error || !data) {
@@ -1361,33 +1368,6 @@ export function DomainResults({ domain }: DomainResultsProps) {
           </Card>
         </TabsContent>
       </Tabs>
-    </div>
-  );
-}
-
-function DomainResultsSkeleton() {
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-4 w-48 mt-2" />
-        </div>
-        <div className="flex items-center gap-2">
-          <Skeleton className="h-10 w-32" />
-          <Skeleton className="h-10 w-32" />
-          <Skeleton className="h-10 w-40" />
-        </div>
-      </div>
-
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        <Skeleton className="h-32" />
-        <Skeleton className="h-32" />
-        <Skeleton className="h-32" />
-      </div>
-
-      <Skeleton className="h-12 w-full" />
-      <Skeleton className="h-64 w-full" />
     </div>
   );
 }

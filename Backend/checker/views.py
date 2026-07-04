@@ -462,6 +462,8 @@ def analyze_domain(request):
 
     try:
         result = analyze_domain_for_response(domain)
+        if result.get("error"):
+            return JsonResponse(result, status=500)
         return JsonResponse(result)
     except Exception as exc:
         logger.error("analyze_domain error: %s", exc)
