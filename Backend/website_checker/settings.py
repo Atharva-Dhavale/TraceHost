@@ -156,8 +156,16 @@ CORS_ALLOW_HEADERS = [
     "x-requested-with",
 ]
 
+from decouple import config as _config
+
+REDIS_URL = _config("REDIS_URL", default="redis://127.0.0.1:6379/1")
+
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': REDIS_URL,
     }
 }
+
+# Domain analysis cache TTL — 12 hours
+DOMAIN_ANALYSIS_CACHE_TTL = 43200

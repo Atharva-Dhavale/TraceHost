@@ -63,12 +63,12 @@ def save_scan(scan_doc: dict) -> str:
         return ""
 
 
-def flag_domain(domain: str, flag: bool = True) -> bool:
+def flag_domain(domain: str, flag: bool = True) -> dict:
     """Set or clear the is_flagged flag on every scan for a domain."""
     try:
         db = get_db()
         scans = db["scans"]
-        scans.update_many(
+        result = scans.update_many(
             {"domain": domain},
             {"$set": {"is_flagged": flag, "last_flagged_date": datetime.now(timezone.utc)}},
         )
@@ -79,15 +79,13 @@ def flag_domain(domain: str, flag: bool = True) -> bool:
                 {"$set": {"category": "Flagged"}},
             )
         else:
-            scans.update_many(
-                {"domain": domain, "category": "Flagged"},
-                {"$set": {"category": "Clean"}},
-            )
+            # Once unflagged, non-suspicious scans should fall back to clean.
+            scans.update_many({"domain": domain, "is_suspicious": False}, {"$set": {"category": "Clean"}})
         logger.info("Domain %s %s", domain, "flagged" if flag else "unflagged")
-        return True
+        return {"ok": True, "matched": result.matched_count, "modified": result.modified_count}
     except Exception as exc:
         logger.error("Failed to flag domain in MongoDB: %s", exc)
-        return False
+        return {"ok": False, "error": str(exc)}
 
 
 # ── Read Operations ───────────────────────────────────────────────────────────

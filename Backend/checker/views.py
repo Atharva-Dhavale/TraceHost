@@ -1,6 +1,7 @@
 from django.http import JsonResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.core.cache import cache
+from django.conf import settings
 from django.utils import timezone
 import requests
 import whois
@@ -434,6 +435,7 @@ def analyze_domain_for_response(domain: str) -> dict:
         }
         try:
             mongo_store.save_scan(scan_doc)
+            _invalidate_dashboard_cache()
         except Exception as exc:
             logger.warning("Could not persist scan to MongoDB: %s", exc)
 
@@ -451,6 +453,23 @@ def analyze_domain_for_response(domain: str) -> dict:
 
 # ── API Views ─────────────────────────────────────────────────────────────────
 
+def _domain_cache_key(domain: str) -> str:
+    return f"domain_analysis:{domain.lower()}"
+
+
+DOMAIN_ANALYSIS_CACHE_TTL = getattr(settings, "DOMAIN_ANALYSIS_CACHE_TTL", 43200)
+DASHBOARD_CACHE_KEY = "dashboard_data_v2"
+DASHBOARD_CACHE_TTL = 300
+
+
+def _dashboard_cache_key(page: int, page_size: int) -> str:
+    return f"{DASHBOARD_CACHE_KEY}:page={page}:page_size={page_size}"
+
+
+def _invalidate_dashboard_cache() -> None:
+    cache.delete_pattern(f"{DASHBOARD_CACHE_KEY}*")
+
+
 @csrf_exempt
 def analyze_domain(request):
     domain = request.GET.get("domain", "").strip()
@@ -459,14 +478,32 @@ def analyze_domain(request):
     if not domain:
         return JsonResponse({"error": "No domain provided"}, status=400)
 
+    cache_key = _domain_cache_key(domain)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        logger.info("Cache hit for domain: %s", domain)
+        return JsonResponse({**cached, "cached": True})
+
     try:
         result = analyze_domain_for_response(domain)
         if result.get("error"):
             return JsonResponse(result, status=500)
-        return JsonResponse(result)
+        cache.set(cache_key, result, DOMAIN_ANALYSIS_CACHE_TTL)
+        return JsonResponse({**result, "cached": False})
     except Exception as exc:
         logger.error("analyze_domain error: %s", exc)
         return JsonResponse({"error": "Analysis failed", "message": str(exc)}, status=500)
+
+
+@csrf_exempt
+def invalidate_domain_cache(request):
+    domain = request.GET.get("domain", "").strip()
+    if not domain:
+        return JsonResponse({"error": "No domain provided"}, status=400)
+
+    cache.delete(_domain_cache_key(domain))
+    logger.info("Cache invalidated for domain: %s", domain)
+    return JsonResponse({"domain": domain, "cache_cleared": True})
 
 
 @csrf_exempt
@@ -481,16 +518,16 @@ def suspicious_view(request):
 @csrf_exempt
 def get_dashboard_data(request):
     logger.info("Dashboard data request")
-    cache_key = "dashboard_data_v2"
+    page      = int(request.GET.get("page", 1))
+    page_size = int(request.GET.get("page_size", 10))
+    cache_key = _dashboard_cache_key(page, page_size)
     cached = cache.get(cache_key)
     if cached:
         return JsonResponse(cached)
 
     try:
-        page      = int(request.GET.get("page", 1))
-        page_size = int(request.GET.get("page_size", 10))
         data = mongo_store.get_dashboard_stats(page=page, page_size=page_size)
-        cache.set(cache_key, data, 300)
+        cache.set(cache_key, data, DASHBOARD_CACHE_TTL)
         return JsonResponse(data)
     except Exception as exc:
         logger.error("Dashboard error: %s", exc)
@@ -556,12 +593,17 @@ def flag_domain(request):
             return JsonResponse({"error": "Domain required"}, status=400)
 
         logger.info("Flag request: %s -> %s", domain, flag)
-        ok = mongo_store.flag_domain(domain, flag)
+        result = mongo_store.flag_domain(domain, flag)
+        _invalidate_dashboard_cache()
+        if not result.get("ok"):
+            return JsonResponse({"error": result.get("error", "Unable to update domain flag")}, status=500)
 
         return JsonResponse({
-            "success": ok,
+            "success": True,
             "domain":    domain,
             "is_flagged": flag,
+            "matched": result.get("matched", 0),
+            "modified": result.get("modified", 0),
             "message": f"Domain {'flagged' if flag else 'unflagged'} successfully",
         })
     except json.JSONDecodeError:
