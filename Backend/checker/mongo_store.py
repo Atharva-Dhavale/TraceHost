@@ -278,32 +278,68 @@ def get_suspicious_domains(
     search: str = "",
     filter_category: str | None = None,
 ) -> dict:
-    """Paginated suspicious domains list with optional search and risk-level filter."""
+    """
+    Paginated suspicious/flagged domains, one row per domain (its most recent
+    scan), with optional search and risk-level filter.
+
+    Every analysis inserts a new scan document (full history is kept, never
+    overwritten), so a repeatedly-scanned domain has many rows sharing the
+    same domain name and the same is_flagged value (flag_domain() sets it
+    across all of a domain's historical scans). Grouping by domain here
+    keeps the list one-entry-per-domain instead of one-entry-per-scan.
+    """
     try:
         db = get_db()
         scans = db["scans"]
-        query: dict = {"$or": [{"is_suspicious": True}, {"is_flagged": True}]}
+        match: dict = {"$or": [{"is_suspicious": True}, {"is_flagged": True}]}
 
         if search:
-            query["domain"] = {"$regex": search, "$options": "i"}
+            match["domain"] = {"$regex": search, "$options": "i"}
+
+        pipeline = [
+            {"$match": match},
+            {"$sort": {"scan_date": DESCENDING}},
+            {"$group": {
+                "_id": "$domain",
+                "risk_score":    {"$first": "$risk_score"},
+                "category":      {"$first": "$category"},
+                "status":        {"$first": "$status"},
+                "scan_date":     {"$first": "$scan_date"},
+                "is_suspicious": {"$first": "$is_suspicious"},
+                "is_flagged":    {"$first": "$is_flagged"},
+            }},
+        ]
 
         risk_map = {"high": (70, 100), "medium": (40, 69), "low": (0, 39)}
         if filter_category and filter_category.lower() in risk_map:
             lo, hi = risk_map[filter_category.lower()]
-            query["risk_score"] = {"$gte": lo, "$lte": hi}
+            # Post-group: filter on each domain's latest risk score, not any
+            # historical scan's score.
+            pipeline.append({"$match": {"risk_score": {"$gte": lo, "$lte": hi}}})
         elif filter_category:
-            query["category"] = filter_category
+            pipeline.append({"$match": {"category": filter_category}})
 
-        total = scans.count_documents(query)
-        docs = list(
-            scans.find(
-                query,
-                {"_id": 0, "domain": 1, "risk_score": 1, "category": 1,
-                 "status": 1, "scan_date": 1, "is_suspicious": 1, "is_flagged": 1}
-            ).sort("scan_date", DESCENDING).skip((page - 1) * limit).limit(limit)
-        )
+        pipeline.append({"$sort": {"scan_date": DESCENDING}})
+        pipeline.append({
+            "$facet": {
+                "total": [{"$count": "count"}],
+                "domains": [
+                    {"$skip": (page - 1) * limit},
+                    {"$limit": limit},
+                    {"$project": {
+                        "_id": 0, "domain": "$_id",
+                        "risk_score": 1, "category": 1, "status": 1,
+                        "scan_date": 1, "is_suspicious": 1, "is_flagged": 1,
+                    }},
+                ],
+            }
+        })
+
+        result = list(scans.aggregate(pipeline))[0]
+        total = result["total"][0]["count"] if result["total"] else 0
+
         domains = []
-        for d in docs:
+        for d in result["domains"]:
             if isinstance(d.get("scan_date"), datetime):
                 d["scan_date"] = d["scan_date"].isoformat()
             if not d.get("category"):

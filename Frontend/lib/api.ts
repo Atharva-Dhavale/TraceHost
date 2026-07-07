@@ -188,13 +188,13 @@ export interface SuspiciousDomainsParams {
 
 export interface SuspiciousDomainsResponse {
   domains: {
-    id: string;
     domain: string;
     risk_score: number;
     category: string;
     status: string;
     scan_date: string;
     is_suspicious: boolean;
+    is_flagged: boolean;
   }[];
   total: number;
 }

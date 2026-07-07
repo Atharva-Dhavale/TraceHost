@@ -23,18 +23,21 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
-import { getSuspiciousDomains, exportSuspiciousDomains, SuspiciousDomainsParams, ExportParams } from "@/lib/api";
+import { getSuspiciousDomains, exportSuspiciousDomains, flagDomain, SuspiciousDomainsParams, SuspiciousDomainsResponse, ExportParams } from "@/lib/api";
+
+type SuspiciousDomainEntry = SuspiciousDomainsResponse["domains"][number];
 
 export default function SuspiciousPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [domains, setDomains] = useState<any[]>([]);
+  const [domains, setDomains] = useState<SuspiciousDomainEntry[]>([]);
   const [totalDomains, setTotalDomains] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [isExporting, setIsExporting] = useState(false);
+  const [unflaggingDomain, setUnflaggingDomain] = useState<string | null>(null);
   const { toast } = useToast();
   const itemsPerPage = 10;
 
@@ -111,6 +114,39 @@ export default function SuspiciousPage() {
       });
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  const handleUnflag = async (domainName: string) => {
+    setUnflaggingDomain(domainName);
+    try {
+      await flagDomain(domainName, false);
+
+      setDomains((prev) =>
+        prev
+          // A domain only appeared in this list via is_suspicious OR is_flagged;
+          // once unflagged, drop it unless the risk score alone still qualifies it.
+          .map((d) => (d.domain === domainName ? { ...d, is_flagged: false } : d))
+          .filter((d) => d.domain !== domainName || d.is_suspicious)
+      );
+      setTotalDomains((prev) => {
+        const stillListed = domains.some((d) => d.domain === domainName && d.is_suspicious);
+        return stillListed ? prev : Math.max(0, prev - 1);
+      });
+
+      toast({
+        title: "Domain Unflagged",
+        description: `${domainName} has been removed from flagged investigation.`,
+      });
+    } catch (err) {
+      console.error("Error unflagging domain:", err);
+      toast({
+        variant: "destructive",
+        title: "Unflag Failed",
+        description: "There was an error unflagging this domain. Please try again.",
+      });
+    } finally {
+      setUnflaggingDomain(null);
     }
   };
 
@@ -242,9 +278,14 @@ export default function SuspiciousPage() {
                       </TableHeader>
                       <TableBody>
                         {domains.map((domain) => (
-                          <TableRow key={domain.id} className="hover:bg-secondary/5">
+                          <TableRow key={domain.domain} className="hover:bg-secondary/5">
                             <TableCell className="font-medium">
-                              {domain.domain}
+                              <div className="flex items-center gap-2">
+                                <span>{domain.domain}</span>
+                                {domain.is_flagged && (
+                                  <Badge variant="outline" className="text-xs">Flagged</Badge>
+                                )}
+                              </div>
                             </TableCell>
                             <TableCell>
                               <Badge
@@ -271,7 +312,21 @@ export default function SuspiciousPage() {
                                 {domain.status}
                               </Badge>
                             </TableCell>
-                            <TableCell className="text-right">
+                            <TableCell className="text-right space-x-2 whitespace-nowrap">
+                              {domain.is_flagged && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleUnflag(domain.domain)}
+                                  disabled={unflaggingDomain === domain.domain}
+                                >
+                                  {unflaggingDomain === domain.domain ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    "Unflag"
+                                  )}
+                                </Button>
+                              )}
                               <Button variant="outline" size="sm" className="gradient-border" asChild>
                                 <a href={`/analyze?domain=${domain.domain}`}>
                                   View Details
