@@ -235,7 +235,7 @@ export default function APIDocsPage() {
                   <Badge className="bg-green-500">POST</Badge>
                   <h3 className="font-medium">/flag_domain</h3>
                 </div>
-                <p>Flag or unflag a domain for further investigation.</p>
+                <p>Flag or unflag a domain for further investigation. The backend updates MongoDB and clears Redis dashboard cache entries after each change.</p>
                 <div className="space-y-2">
                   <h4 className="font-medium text-sm">Request Body</h4>
                   <CodeBlock
@@ -255,7 +255,7 @@ export default function APIDocsPage() {
                   <Badge className="bg-blue-500">GET</Badge>
                   <h3 className="font-medium">/dashboard</h3>
                 </div>
-                <p>Get dashboard data with statistics and trends.</p>
+                <p>Get dashboard data with statistics and trends. Responses are cached in Redis by page and page size for 5 minutes.</p>
                 <div className="space-y-2">
                   <h4 className="font-medium text-sm">Query Parameters</h4>
                   <ul className="list-disc list-inside space-y-1 text-sm">

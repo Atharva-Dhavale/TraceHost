@@ -21,5 +21,6 @@ from checker.views import health_check
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('checker.urls')),  # Changed from 'checker/' to 'api/'
+    path('api/attack-surface/', include('attack_surface.urls')),
     path('health', health_check, name='root_health_check'),  # Root-level health check
 ]

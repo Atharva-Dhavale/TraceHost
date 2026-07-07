@@ -82,6 +82,9 @@ export function Header() {
             <Link href="/analyze" className={`nav-link ${isActive('/analyze') ? 'active' : ''}`}>
               Analyze
             </Link>
+            <Link href="/attack-surface" className={`nav-link ${isActive('/attack-surface') ? 'active' : ''}`}>
+              Attack Surface
+            </Link>
             <Link href="/api-docs" className={`nav-link ${isActive('/api-docs') ? 'active' : ''}`}>
               API Docs
             </Link>
@@ -132,6 +135,11 @@ export function Header() {
                   <SheetClose asChild>
                     <Link href="/analyze" className={`nav-item hover:bg-accent/10 ${isActive('/analyze') ? 'bg-accent/10' : ''}`}>
                       Analyze
+                    </Link>
+                  </SheetClose>
+                  <SheetClose asChild>
+                    <Link href="/attack-surface" className={`nav-item hover:bg-accent/10 ${isActive('/attack-surface') ? 'bg-accent/10' : ''}`}>
+                      Attack Surface
                     </Link>
                   </SheetClose>
                   <SheetClose asChild>

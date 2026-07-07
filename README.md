@@ -12,7 +12,7 @@
 
 </div>
 
-TraceHost is a monorepo: a **Next.js** frontend for exploring domain analysis results and a **Django REST** backend that performs the actual lookups (WHOIS, DNS, geolocation, Shodan, SecurityTrails) and computes a composite risk score, with scan history and flagged domains persisted in **MongoDB Atlas**.
+TraceHost is a monorepo: a **Next.js** frontend for exploring domain analysis results and a **Django REST** backend that performs the actual lookups (WHOIS, DNS, geolocation, Shodan, SecurityTrails) and computes a composite risk score, with scan history and flagged domains persisted in **MongoDB Atlas**. The backend now also uses **Redis** for response caching so repeated analysis and dashboard reads are faster.
 
 ## ✨ Features
 
@@ -23,7 +23,7 @@ TraceHost is a monorepo: a **Next.js** frontend for exploring domain analysis re
 - 🌎 **Geolocation Visualization** — server locations plotted via the Google Maps API
 - 🗃️ **Persistent Scan History** — every scan, flagged domain, and dashboard stat is stored in MongoDB
 - 🚩 **Suspicious Domain Tracking** — list, flag, and review domains marked as suspicious
-- 📊 **Dashboard** — aggregate stats across all scans
+- 📊 **Dashboard** — aggregate stats across all scans, backed by Redis caching for faster repeat reads
 - 📑 **PDF Export** — export a domain's analysis results as a report
 - 🎨 **Minimalist UI** — clean, modern interface built with Tailwind CSS, Radix UI, and shadcn-style components
 
@@ -147,6 +147,10 @@ Environment variables are split across two files — see `.env.example` at the r
 | Variable | Description |
 |----------|-------------|
 | `MONGO_URI` | MongoDB Atlas connection string (database name comes from the URI path) |
+| `REDIS_URL` | Redis connection string used by Django cache backends | `redis://127.0.0.1:6379/1` |
+| `NEO4J_URI` | Neo4j Aura connection URI for the attack-surface graph | – |
+| `NEO4J_USER` | Neo4j Aura username | – |
+| `NEO4J_PASSWORD` | Neo4j Aura password | – |
 | `IPINFO_API_KEY` | [ipinfo.io](https://ipinfo.io/) key for IP geolocation |
 | `SHODAN_API_KEY` | [Shodan](https://www.shodan.io/) key for exposed-service/port data |
 | `SECURITY_TRAILS_API_KEY` | [SecurityTrails](https://securitytrails.com/) key for DNS/subdomain history |
@@ -162,9 +166,9 @@ All endpoints are served under `Backend`'s `/api/` prefix (e.g. `http://localhos
 | GET | `/api/health` | Health check |
 | GET/POST | `/api/analyze` | Run a full domain analysis (WHOIS, DNS, geolocation, threat intel, risk score) |
 | GET | `/api/suspicious` | View a single suspicious domain's details |
-| GET | `/api/dashboard` | Aggregate dashboard statistics |
+| GET | `/api/dashboard` | Aggregate dashboard statistics, cached in Redis |
 | GET | `/api/suspicious_domains` | List all flagged/suspicious domains |
-| POST | `/api/flag_domain` | Flag a domain as suspicious |
+| POST | `/api/flag_domain` | Flag or unflag a domain as suspicious |
 | GET | `/api/scan_history` | Retrieve past scan history |
 
 ## 🌐 Integration with External Services
@@ -175,6 +179,7 @@ All endpoints are served under `Backend`'s `/api/` prefix (e.g. `http://localhos
 - **Shodan** — exposed services, open ports, banner data
 - **SecurityTrails** — historical DNS and subdomain data
 - **OpenRouter** — AI-generated natural-language risk summaries (configurable model, defaults to `openai/gpt-oss-120b:free`)
+- **Redis** — short-lived caching for domain analysis and dashboard aggregation
 - **MongoDB Atlas** — persistent storage for scans, dashboard stats, and flagged domains
 
 ## 🔐 Security Best Practices

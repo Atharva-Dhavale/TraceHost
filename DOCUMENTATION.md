@@ -105,10 +105,10 @@ TraceHost follows a **Decoupled Client-Server (Two-Tier) Architecture**.
 **Key architectural decisions:**
 
 - **Frontend renders on the client** (`"use client"` components) — the Next.js app is effectively an SPA over a REST backend.
-- **Backend is stateless per-request** — each `/api/analyze` call re-fetches fresh WHOIS/DNS/Shodan/threat-intel data; nothing is served from a short-lived request cache. Persistence to MongoDB is a side-effect (full scan history), not a read-path cache.
+- **Backend uses Redis caching for hot read paths** — `/api/analyze` responses are cached per normalized domain, and `/api/dashboard` responses are cached per page/page_size combination. Persistence to MongoDB is still the system of record; Redis is only a short-lived acceleration layer.
 - **Scoring is deterministic and server-side, independent of the AI call** — see [§4](#4-the-threatvector-risk-engine).
 - **AI narrative generation is isolated** to `generate_domain_summary()` in `views.py`; a failure there degrades gracefully to canned text and never blocks the response or alters the score.
-- **Dashboard/aggregate reads are cached** via Django's `LocMemCache` (5-minute TTL); the frontend also keeps a short-lived in-memory `Map` cache in `lib/api.ts`.
+- **Dashboard/aggregate reads are cached** via Django's Redis cache backend (5-minute TTL); the frontend also keeps a short-lived in-memory `Map` cache in `lib/api.ts`.
 
 ---
 
@@ -120,7 +120,7 @@ TraceHost follows a **Decoupled Client-Server (Two-Tier) Architecture**.
 
 | File | Responsibility |
 |---|---|
-| `settings.py` | Installed apps, CORS, middleware, cache config, REST framework config. `DATABASES` still points at SQLite for Django's own bookkeeping (sessions/admin) — **scan data lives in MongoDB, not here**. |
+| `settings.py` | Installed apps, CORS, middleware, Redis cache config, REST framework config. `DATABASES` still points at SQLite for Django's own bookkeeping (sessions/admin) — **scan data lives in MongoDB, not here**. |
 | `urls.py` | Root URL dispatcher: `/admin/`, `/api/*` → `checker.urls`, and a root-level `/health` alias |
 | `wsgi.py` / `asgi.py` | Deployment entry points |
 
@@ -133,7 +133,7 @@ A secondary, hardened settings module (`SECRET_KEY` from env, `CORS_ALLOW_ALL_OR
 | File | Responsibility |
 |---|---|
 | `models.py` | Legacy `DomainScan` Django model. **No longer read or written by any view** — all scan persistence goes through `mongo_store.py` / MongoDB instead. Retained for backward compatibility with the SQLite migration history only. |
-| `views.py` | API view functions, external-API integration helpers, and the analysis pipeline orchestration (571 lines) |
+| `views.py` | API view functions, external-API integration helpers, Redis cache orchestration, and the analysis pipeline orchestration (571 lines) |
 | `risk_engine.py` | **ThreatVector Engine** — deterministic multi-factor domain risk scoring (553 lines). See [§4](#4-the-threatvector-risk-engine). |
 | `threat_intel.py` | URLhaus (abuse.ch) threat-feed integration |
 | `mongo_store.py` | All MongoDB read/write operations: `save_scan`, `flag_domain`, `get_domain_history`, `get_dashboard_stats`, `get_suspicious_domains`, etc. |
@@ -154,12 +154,12 @@ A secondary, hardened settings module (`SECRET_KEY` from env, `CORS_ALLOW_ALL_OR
 | `get_asn_info(ip)` | Geolocation + ASN via IPinfo |
 | `generate_domain_summary(domain_data)` | Builds the OpenRouter prompt and returns the narrative `AI_Summary` string; **never influences `risk_score`** |
 | `analyze_domain_for_response(domain)` | Orchestrates the full pipeline: WHOIS → DNS → historical DNS/subdomains → ASN → Shodan → `calculate_advanced_risk_score()` → URLhaus → AI narrative → MongoDB persistence |
-| `analyze_domain(request)` | `GET /api/analyze` — validates input, calls the pipeline, and **returns HTTP 500 if the pipeline embeds an `"error"` key** (so the frontend's axios call correctly rejects instead of silently rendering a broken result) |
+| `analyze_domain(request)` | `GET /api/analyze` — validates input, calls the pipeline, caches successful responses in Redis, and **returns HTTP 500 if the pipeline embeds an `"error"` key** (so the frontend's axios call correctly rejects instead of silently rendering a broken result) |
 | `suspicious_view(request)` | `GET /api/suspicious` — re-runs the analysis pipeline on demand |
-| `get_dashboard_data(request)` | `GET /api/dashboard` — cached aggregate stats from MongoDB |
+| `get_dashboard_data(request)` | `GET /api/dashboard` — Redis-cached aggregate stats from MongoDB, keyed by page and page size |
 | `suspicious_domains_list(request)` | `GET /api/suspicious_domains` — paginated/filterable list from MongoDB |
 | `scan_history(request)` | `GET /api/scan_history` — a domain's historical scans from MongoDB |
-| `flag_domain(request)` | `POST /api/flag_domain` — sets/clears `is_flagged` across all of a domain's MongoDB scan records |
+| `flag_domain(request)` | `POST /api/flag_domain` — sets/clears `is_flagged` across all of a domain's MongoDB scan records and invalidates dashboard cache entries |
 | `health_check(request)` | `GET /api/health` and `GET /health` — liveness probe |
 | `call_with_retry(func, ...)` | Generic retry wrapper (max 3 attempts, 1s backoff) used around the OpenRouter call |
 
@@ -544,14 +544,14 @@ sequenceDiagram
     participant UI as Dashboard Page
     participant API as API Service
     participant Django as Django Backend
-    participant Cache as LocMemCache
+    participant Cache as RedisCache
     participant Mongo as MongoDB
 
     User->>UI: Navigate to Dashboard
     UI->>API: getDashboardData()
     API->>Django: GET /api/dashboard
 
-    Django->>Cache: Check cache ("dashboard_data_v2")
+    Django->>Cache: Check cache ("dashboard_data_v2:page=1:page_size=10")
     alt Cache hit
         Cache-->>Django: Cached data
     else Cache miss
@@ -592,6 +592,10 @@ sequenceDiagram
 | `OPENROUTER_API_KEY` | AI narrative summary generation | Yes (narrative degrades gracefully without it) |
 | `OPENROUTER_MODEL` | Model id | `openai/gpt-oss-120b:free` |
 | `URLHAUS_AUTH_KEY` | Free abuse.ch Auth-Key — without it, IntelFeed reports `listed: null` instead of live data | Recommended |
+| `REDIS_URL` | Redis connection string used for domain and dashboard response caching | `redis://127.0.0.1:6379/1` |
+| `NEO4J_URI` | Neo4j Aura connection URI for the attack-surface graph | Recommended |
+| `NEO4J_USER` | Neo4j Aura username | Recommended |
+| `NEO4J_PASSWORD` | Neo4j Aura password | Recommended |
 
 ---
 

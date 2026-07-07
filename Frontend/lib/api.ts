@@ -204,6 +204,36 @@ export interface ExportParams {
   filter?: string | null;
 }
 
+export type AttackSurfaceNodeType = 'domain' | 'subdomain' | 'ip' | 'asn' | 'country' | 'ssl';
+
+export interface AttackSurfaceNode {
+  id: string;
+  type: AttackSurfaceNodeType;
+  key: string;
+  label: string;
+  data: Record<string, any>;
+}
+
+export interface AttackSurfaceEdge {
+  id: string;
+  source: string;
+  target: string;
+  source_type: AttackSurfaceNodeType;
+  target_type: AttackSurfaceNodeType;
+  relationship: 'HAS_SUBDOMAIN' | 'RESOLVES_TO' | 'BELONGS_TO' | 'LOCATED_IN' | 'USES_SSL';
+}
+
+export interface AttackSurfaceGraphResponse {
+  domain: string;
+  generated_at: string;
+  subdomain_count: number;
+  neo4j_persisted: boolean;
+  nodes: AttackSurfaceNode[];
+  edges: AttackSurfaceEdge[];
+  cached: boolean;
+  error?: string;
+}
+
 /**
  * Cached fetch function to handle API requests with built-in caching and verbose logging
  */
@@ -409,6 +439,22 @@ export const exportSuspiciousDomains = async (params?: ExportParams): Promise<Bl
     return new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   } catch (error) {
     console.error('Error exporting suspicious domains:', error);
+    throw error;
+  }
+};
+
+/**
+ * Scan a domain's attack surface (subdomains, IPs, ASN, country, SSL) and
+ * return the infrastructure graph. Backed by a 12h Redis cache + Neo4j.
+ */
+export const attackSurfaceScan = async (domain: string): Promise<AttackSurfaceGraphResponse> => {
+  try {
+    const response = await api.get('/api/attack-surface/scan', {
+      params: { domain },
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error scanning attack surface:', error);
     throw error;
   }
 };

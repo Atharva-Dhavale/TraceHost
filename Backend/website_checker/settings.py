@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'checker',  # Your main app
+    'attack_surface',  # Attack Surface Explorer (Neo4j-backed infra graph)
     'corsheaders',  # If you're using CORS
     'rest_framework',  # If you're using DRF
 ]
@@ -169,3 +170,11 @@ CACHES = {
 
 # Domain analysis cache TTL — 12 hours
 DOMAIN_ANALYSIS_CACHE_TTL = 43200
+
+# Attack Surface Explorer — Neo4j (leave blank until Aura credentials are added)
+NEO4J_URI = _config("NEO4J_URI", default="")
+NEO4J_USER = _config("NEO4J_USER", default="")
+NEO4J_PASSWORD = _config("NEO4J_PASSWORD", default="")
+
+# Attack surface graph cache TTL — 12 hours
+ATTACK_SURFACE_CACHE_TTL = 43200
